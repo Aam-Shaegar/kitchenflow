@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: kitchen
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kitchen"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  kitchen-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.kitchen-api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/kitchen?sslmode=disable
+      DB_TIMEOUT: 10s
+      SERVER_ADDR: :8080
+      SHUTDOWN_TIMEOUT: 30s
+      TIME_ZONE: UTC
+      LOGGER_FOLDER: /app/logs
+      LOGGER_LEVEL: INFO
+      RESTAURANT_MOCK_URL: http://restaurant-mock:8081
+      MIGRATIONS_DIR: /app/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  restaurant-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.restaurant-mock
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: 8081
+      KITCHEN_CALLBACK_URL: http://kitchen-api:8080
+      RESTAURANT_ID: 550e8400-e29b-41d4-a716-446655440000
+      MOCK_MODE: auto
+      MOCK_DELAYS: 2s,2s,2s,2s,2s
+    depends_on:
+      kitchen-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

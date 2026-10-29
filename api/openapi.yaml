@@ -1,0 +1,656 @@
+openapi: 3.0.3
+info:
+  title: KitchenFlow API
+  version: 1.0.0
+  description: |
+    Product-ready food delivery backend. Money is in minor units (kopecks, integer).
+    User identity is passed via X-User-ID (auth is fronted by gateway in production).
+servers:
+  - url: http://localhost:8080
+
+tags:
+  - name: Restaurants
+  - name: Menu
+  - name: Cart
+  - name: Orders
+  - name: Restaurant Integration
+  - name: Restaurant Portal
+
+paths:
+  /api/v1/health:
+    get:
+      tags: [Restaurants]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/v1/restaurants:
+    get:
+      tags: [Restaurants]
+      summary: List restaurants
+      parameters:
+        - name: open
+          in: query
+          schema: { type: boolean }
+          description: If true, return only open restaurants
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Restaurant list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Restaurant' }
+    post:
+      tags: [Restaurant Portal]
+      summary: Onboard a restaurant (closed partner API)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRestaurantRequest' }
+      responses:
+        '201':
+          description: Created restaurant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Restaurant' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/restaurants/{restaurant_id}:
+    get:
+      tags: [Restaurants]
+      summary: Get restaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      responses:
+        '200':
+          description: Restaurant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Restaurant' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Restaurant Portal]
+      summary: Update restaurant (open/close, contacts)
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRestaurantRequest' }
+      responses:
+        '200':
+          description: Updated restaurant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Restaurant' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/restaurants/{restaurant_id}/menu:
+    get:
+      tags: [Menu]
+      summary: Get restaurant menu
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+        - name: available
+          in: query
+          schema: { type: boolean }
+          description: If true, return only available items
+      responses:
+        '200':
+          description: Menu grouped by category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Menu'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/restaurants/{restaurant_id}/menu/categories:
+    post:
+      tags: [Restaurant Portal]
+      summary: Create menu category
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+                position: { type: integer, minimum: 0 }
+      responses:
+        '201':
+          description: Created category
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuCategory' }
+
+  /api/v1/restaurants/{restaurant_id}/menu/items:
+    post:
+      tags: [Restaurant Portal]
+      summary: Create menu item (price in kopecks)
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMenuItemRequest' }
+      responses:
+        '201':
+          description: Created item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuItem' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/restaurants/{restaurant_id}/orders:
+    get:
+      tags: [Restaurant Portal]
+      summary: List incoming orders for a restaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Restaurant orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+
+  /api/v1/menu-items/{menu_item_id}:
+    get:
+      tags: [Menu]
+      summary: Get menu item
+      parameters:
+        - $ref: '#/components/parameters/MenuItemID'
+      responses:
+        '200':
+          description: Menu item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Restaurant Portal]
+      summary: Update menu item (price in kopecks)
+      parameters:
+        - $ref: '#/components/parameters/MenuItemID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMenuItemRequest' }
+      responses:
+        '200':
+          description: Updated item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MenuItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Restaurant Portal]
+      summary: Delete menu item
+      parameters:
+        - $ref: '#/components/parameters/MenuItemID'
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/cart:
+    get:
+      tags: [Cart]
+      summary: Get current user's cart (single active cart)
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Cart
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Cart]
+      summary: Clear cart
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '204': { description: Cleared }
+
+  /api/v1/cart/items:
+    post:
+      tags: [Cart]
+      summary: Add item to cart (one restaurant per cart)
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCartItemRequest'
+      responses:
+        '201':
+          description: Updated cart
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/cart/items/{cart_item_id}:
+    patch:
+      tags: [Cart]
+      summary: Change cart item quantity
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: cart_item_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: Updated cart
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Cart]
+      summary: Remove cart item
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: cart_item_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/orders:
+    post:
+      tags: [Orders]
+      summary: Create order from current cart
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Created order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [Orders]
+      summary: List user's orders
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+
+  /api/v1/orders/{order_id}:
+    get:
+      tags: [Orders]
+      summary: Get order
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/orders/{order_id}/status:
+    get:
+      tags: [Orders]
+      summary: Get order status
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Current order status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { $ref: '#/components/schemas/OrderStatus' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/orders/{order_id}/history:
+    get:
+      tags: [Orders]
+      summary: Get order status history
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Status history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/OrderStatusHistory' }
+
+  /api/v1/orders/{order_id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Cancel order (pending/confirmed only)
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Cancelled order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/orders/{order_id}/retry:
+    post:
+      tags: [Orders]
+      summary: Retry restaurant integration for integration_failed orders
+      parameters:
+        - $ref: '#/components/parameters/OrderID'
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Order after retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/integrations/restaurants/{restaurant_id}/orders/status:
+    post:
+      tags: [Restaurant Integration]
+      summary: Restaurant callback for order status (idempotent via event_id)
+      parameters:
+        - $ref: '#/components/parameters/RestaurantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestaurantOrderStatusCallback'
+      responses:
+        '204': { description: Status accepted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+components:
+  parameters:
+    RestaurantID:
+      name: restaurant_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MenuItemID:
+      name: menu_item_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrderID:
+      name: order_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserID:
+      name: X-User-ID
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Business conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Restaurant:
+      type: object
+      required: [id, name, description, is_open]
+      properties:
+        id: { type: string, format: uuid }
+        external_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        is_open: { type: boolean }
+        integration_base_url: { type: string }
+
+    CreateRestaurantRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        external_id: { type: string, maxLength: 128 }
+        integration_base_url: { type: string, maxLength: 512 }
+
+    UpdateRestaurantRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        is_open: { type: boolean }
+        integration_base_url: { type: string, maxLength: 512 }
+
+    MenuItem:
+      type: object
+      required: [id, category_id, name, description, price, is_available]
+      properties:
+        id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        external_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price: { type: integer, minimum: 0, description: "Price in minor units (kopecks)" }
+        is_available: { type: boolean }
+
+    CreateMenuItemRequest:
+      type: object
+      required: [category_id, name, price]
+      properties:
+        category_id: { type: string, format: uuid }
+        external_id: { type: string }
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        price: { type: integer, minimum: 0, description: "Price in minor units (kopecks)" }
+
+    UpdateMenuItemRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        price: { type: integer, minimum: 0 }
+        is_available: { type: boolean }
+        category_id: { type: string, format: uuid }
+
+    MenuCategory:
+      type: object
+      required: [id, name, items]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MenuItem' }
+
+    Menu:
+      type: object
+      required: [restaurant_id, categories]
+      properties:
+        restaurant_id: { type: string, format: uuid }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/MenuCategory' }
+
+    CartItem:
+      type: object
+      required: [id, menu_item_id, name, unit_price, quantity, total_price]
+      properties:
+        id: { type: string, format: uuid }
+        menu_item_id: { type: string, format: uuid }
+        name: { type: string }
+        unit_price: { type: integer, description: "Minor units (kopecks)" }
+        quantity: { type: integer, minimum: 1, maximum: 50 }
+        total_price: { type: integer, description: "Minor units (kopecks)" }
+
+    Cart:
+      type: object
+      required: [id, restaurant_id, items, total_amount]
+      properties:
+        id: { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+        total_amount: { type: integer, description: "Minor units (kopecks)" }
+
+    AddCartItemRequest:
+      type: object
+      required: [restaurant_id, menu_item_id, quantity]
+      properties:
+        restaurant_id: { type: string, format: uuid }
+        menu_item_id: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1, maximum: 50 }
+
+    CreateOrderRequest:
+      type: object
+      required: [delivery_address]
+      properties:
+        delivery_address: { type: string, minLength: 5, maxLength: 500 }
+
+    OrderStatus:
+      type: string
+      enum: [pending, confirmed, preparing, ready, delivering, delivered, cancelled, integration_failed]
+
+    OrderItem:
+      type: object
+      required: [menu_item_id, name, unit_price, quantity, total_price]
+      properties:
+        menu_item_id: { type: string, format: uuid }
+        name: { type: string }
+        unit_price: { type: integer, description: "Snapshot in kopecks" }
+        quantity: { type: integer, minimum: 1, maximum: 50 }
+        total_price: { type: integer, description: "Minor units (kopecks)" }
+
+    Order:
+      type: object
+      required: [id, restaurant_id, status, total_amount, delivery_address, items, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        external_order_id: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        total_amount: { type: integer, description: "Minor units (kopecks)" }
+        delivery_address: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        status_history:
+          type: array
+          items: { $ref: '#/components/schemas/OrderStatusHistory' }
+        created_at: { type: string, format: date-time }
+
+    OrderStatusHistory:
+      type: object
+      required: [status, source, created_at]
+      properties:
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        source: { type: string, enum: [kitchen, restaurant] }
+        event_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    RestaurantOrderStatusCallback:
+      type: object
+      required: [external_order_id, status, event_id]
+      properties:
+        external_order_id: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        event_id: { type: string }
+
+    Error:
+      type: object
+      required: [message, error]
+      properties:
+        message: { type: string }
+        error: { type: string }

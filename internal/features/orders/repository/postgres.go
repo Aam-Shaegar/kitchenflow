@@ -1,0 +1,541 @@
+package repository
+
+import (
+	"context"
+	"errors"
+
+	"github.com/google/uuid"
+	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
+	"github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
+)
+
+type PostgresOrderRepository struct {
+	pool core_database.Pool
+}
+
+func NewOrderRepository(pool core_database.Pool) *PostgresOrderRepository {
+	return &PostgresOrderRepository{pool: pool}
+}
+
+func (r *PostgresOrderRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE id = $1
+	`
+	row := r.pool.QueryRow(ctx, query, id)
+	order, err := r.scanOrder(row)
+	if err != nil {
+		if errors.Is(err, core_database.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return r.loadOrderDetails(ctx, order)
+}
+
+func (r *PostgresOrderRepository) GetByIDAndUserID(ctx context.Context, id uuid.UUID, userID string) (*domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE id = $1 AND user_id = $2
+	`
+	row := r.pool.QueryRow(ctx, query, id, userID)
+	order, err := r.scanOrder(row)
+	if err != nil {
+		if errors.Is(err, core_database.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return r.loadOrderDetails(ctx, order)
+}
+
+func (r *PostgresOrderRepository) GetByUserIDAndIdempotencyKey(ctx context.Context, userID, idempotencyKey string) (*domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE user_id = $1 AND idempotency_key = $2
+	`
+	row := r.pool.QueryRow(ctx, query, userID, idempotencyKey)
+	order, err := r.scanOrder(row)
+	if err != nil {
+		if errors.Is(err, core_database.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return r.loadOrderDetails(ctx, order)
+}
+
+func (r *PostgresOrderRepository) GetByExternalOrderIDAndRestaurantID(ctx context.Context, externalOrderID string, restaurantID uuid.UUID) (*domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE external_order_id = $1 AND restaurant_id = $2
+	`
+	row := r.pool.QueryRow(ctx, query, externalOrderID, restaurantID)
+	order, err := r.scanOrder(row)
+	if err != nil {
+		if errors.Is(err, core_database.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return r.loadOrderDetails(ctx, order)
+}
+
+func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, order *domain.Order) (*domain.Order, error) {
+	// Everything below must succeed or fail together, so we wrap it in one transaction.
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Rollback on the happy path is a harmless no-op (the tx is already committed),
+	// so we deliberately ignore its error here.
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // rollback after commit is a harmless no-op
+
+	// Insert the order, but do nothing if this user already used this idempotency key.
+	query := `
+		INSERT INTO orders (id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (user_id, idempotency_key) DO NOTHING
+		RETURNING id
+	`
+	var returnedID uuid.UUID
+	err = tx.QueryRow(ctx, query,
+		order.ID, order.UserID, order.RestaurantID, order.ExternalOrderID,
+		order.Status, order.TotalAmount, order.DeliveryAddress,
+		order.IdempotencyKey, order.CreatedAt, order.UpdatedAt,
+	).Scan(&returnedID)
+
+	if err != nil {
+		if errors.Is(err, core_database.ErrNoRows) {
+			// Someone already created an order with this key, so hand back the original.
+			existing, getErr := r.getByUserIDAndIdempotencyKeyTx(ctx, tx, order.UserID, order.IdempotencyKey)
+			if getErr != nil {
+				return nil, getErr
+			}
+			return existing, nil
+		}
+		return nil, err
+	}
+
+	if returnedID != order.ID {
+		// Defensive branch: DO NOTHING should never return a foreign id, but stay safe.
+		existing, getErr := r.getByUserIDAndIdempotencyKeyTx(ctx, tx, order.UserID, order.IdempotencyKey)
+		if getErr != nil {
+			return nil, getErr
+		}
+		return existing, nil
+	}
+
+	// The order row exists, now persist its items and the initial history atomically.
+	for _, item := range order.Items {
+		if err := r.createOrderItemTx(ctx, tx, &item); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, history := range order.StatusHistory {
+		if err := r.addStatusHistoryTx(ctx, tx, &history); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return order, nil
+}
+
+// getByUserIDAndIdempotencyKeyTx reads the idempotent duplicate inside the same tx,
+// so a concurrent retry sees a consistent snapshot.
+func (r *PostgresOrderRepository) getByUserIDAndIdempotencyKeyTx(ctx context.Context, tx core_database.Tx, userID, idempotencyKey string) (*domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE user_id = $1 AND idempotency_key = $2
+	`
+	row := tx.QueryRow(ctx, query, userID, idempotencyKey)
+	order, err := r.scanOrder(row)
+	if err != nil {
+		return nil, err
+	}
+	return r.loadOrderDetailsTx(ctx, tx, order)
+}
+
+// loadOrderDetailsTx attaches items and history while still inside the tx.
+func (r *PostgresOrderRepository) loadOrderDetailsTx(ctx context.Context, tx core_database.Tx, order *domain.Order) (*domain.Order, error) {
+	itemsQuery := `
+		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at
+		FROM order_items
+		WHERE order_id = $1
+	`
+	rows, err := tx.Query(ctx, itemsQuery, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item domain.OrderItem
+		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		order.Items = append(order.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	history, err := r.GetStatusHistoryTx(ctx, tx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	order.StatusHistory = history
+
+	return order, nil
+}
+
+// GetStatusHistoryTx reads an order's history inside an ongoing tx.
+func (r *PostgresOrderRepository) GetStatusHistoryTx(ctx context.Context, tx core_database.Tx, orderID uuid.UUID) ([]domain.OrderStatusHistory, error) {
+	query := `
+		SELECT id, order_id, status, source, event_id, created_at
+		FROM order_status_history
+		WHERE order_id = $1
+		ORDER BY created_at
+	`
+	rows, err := tx.Query(ctx, query, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []domain.OrderStatusHistory
+	for rows.Next() {
+		var h domain.OrderStatusHistory
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Source, &h.EventID, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
+
+func (r *PostgresOrderRepository) ListByUserIDPaginated(ctx context.Context, userID string, limit, offset int) ([]domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.pool.Query(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []domain.Order
+	for rows.Next() {
+		var order domain.Order
+		if err := rows.Scan(
+			&order.ID, &order.UserID, &order.RestaurantID, &order.ExternalOrderID,
+			&order.Status, &order.TotalAmount, &order.DeliveryAddress,
+			&order.IdempotencyKey, &order.CreatedAt, &order.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range orders {
+		loaded, err := r.loadOrderDetails(ctx, &orders[i])
+		if err != nil {
+			return nil, err
+		}
+		orders[i] = *loaded
+	}
+	if orders == nil {
+		orders = []domain.Order{}
+	}
+	return orders, nil
+}
+
+func (r *PostgresOrderRepository) ListByRestaurantID(ctx context.Context, restaurantID uuid.UUID, limit, offset int) ([]domain.Order, error) {
+	query := `
+		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
+		FROM orders
+		WHERE restaurant_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.pool.Query(ctx, query, restaurantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []domain.Order
+	for rows.Next() {
+		var order domain.Order
+		if err := rows.Scan(
+			&order.ID, &order.UserID, &order.RestaurantID, &order.ExternalOrderID,
+			&order.Status, &order.TotalAmount, &order.DeliveryAddress,
+			&order.IdempotencyKey, &order.CreatedAt, &order.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range orders {
+		loaded, err := r.loadOrderDetails(ctx, &orders[i])
+		if err != nil {
+			return nil, err
+		}
+		orders[i] = *loaded
+	}
+	if orders == nil {
+		orders = []domain.Order{}
+	}
+	return orders, nil
+}
+
+func (r *PostgresOrderRepository) Update(ctx context.Context, order *domain.Order) error {
+	query := `
+		UPDATE orders
+		SET external_order_id = $2, status = $3, total_amount = $4, updated_at = $5
+		WHERE id = $1
+	`
+	_, err := r.pool.Exec(ctx, query,
+		order.ID, order.ExternalOrderID, order.Status,
+		order.TotalAmount, order.UpdatedAt,
+	)
+	return err
+}
+
+func (r *PostgresOrderRepository) UpdateOrderAndDeleteCart(ctx context.Context, order *domain.Order, cartID uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // rollback after commit is a harmless no-op
+
+	// Persist the new external id and status first.
+	updateQuery := `
+		UPDATE orders
+		SET external_order_id = $2, status = $3, total_amount = $4, updated_at = $5
+		WHERE id = $1
+	`
+	if _, err := tx.Exec(ctx, updateQuery,
+		order.ID, order.ExternalOrderID, order.Status,
+		order.TotalAmount, order.UpdatedAt,
+	); err != nil {
+		return err
+	}
+
+	// The cart served its purpose: a successful checkout always clears it in the same tx.
+	deleteCartQuery := `DELETE FROM carts WHERE id = $1`
+	if _, err := tx.Exec(ctx, deleteCartQuery, cartID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresOrderRepository) createOrderItemTx(ctx context.Context, tx core_database.Tx, item *domain.OrderItem) error {
+	query := `
+		INSERT INTO order_items (id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err := tx.Exec(ctx, query,
+		item.ID, item.OrderID, item.MenuItemID, item.Name,
+		item.UnitPrice, item.Quantity, item.TotalPrice, item.CreatedAt,
+	)
+	return err
+}
+
+func (r *PostgresOrderRepository) addStatusHistoryTx(ctx context.Context, tx core_database.Tx, history *domain.OrderStatusHistory) error {
+	// A repeated callback carries the same event_id, so skip it instead of duplicating history.
+	if history.EventID != nil {
+		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
+		var exists int
+		err := tx.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
+		if err == nil {
+			// We have seen this event before, so acknowledge it without touching the order.
+			return nil
+		}
+		if !errors.Is(err, core_database.ErrNoRows) {
+			return err
+		}
+	}
+
+	query := `
+		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	_, err := tx.Exec(ctx, query, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt)
+	return err
+}
+
+func (r *PostgresOrderRepository) AddStatusHistory(ctx context.Context, history *domain.OrderStatusHistory) error {
+	// Same duplicate guard outside a tx: repeating a callback must stay a no-op.
+	if history.EventID != nil {
+		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
+		var exists int
+		err := r.pool.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
+		if err == nil {
+			// Already handled this event, acknowledge it again without side effects.
+			return nil
+		}
+		if !errors.Is(err, core_database.ErrNoRows) {
+			return err
+		}
+	}
+
+	query := `
+		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	_, err := r.pool.Exec(ctx, query, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt)
+	return err
+}
+
+func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, orderID uuid.UUID, status domain.OrderStatus, history *domain.OrderStatusHistory) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // rollback after commit is a harmless no-op
+
+	// Lock the order row: two callbacks racing each other must be serialized here.
+	lockQuery := `SELECT status FROM orders WHERE id = $1 FOR UPDATE`
+	var currentStatus domain.OrderStatus
+	err = tx.QueryRow(ctx, lockQuery, orderID).Scan(&currentStatus)
+	if err != nil {
+		return err
+	}
+
+	// Idempotency goes first on purpose: a replayed event is fine even if the
+	// order has already moved past that state.
+	if history.EventID != nil {
+		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
+		var exists int
+		err = tx.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
+		if err == nil {
+			// Duplicate EventID - already processed, return success (idempotent)
+			return nil
+		}
+		if !errors.Is(err, core_database.ErrNoRows) {
+			return err
+		}
+	}
+
+	// The state machine lives in the domain package; the repository only
+	// re-checks it under row lock so concurrent callbacks cannot slip through.
+	if !domain.CanTransition(currentStatus, status) {
+		// Return domain error so HTTP layer maps it to 409 Conflict.
+		_ = tx.Rollback(ctx)
+		return &domain.OrderStatusTransitionError{From: currentStatus, To: status}
+	}
+
+	// Move the order forward and stamp the transition time.
+	updateQuery := `
+		UPDATE orders
+		SET status = $2, updated_at = $3
+		WHERE id = $1
+	`
+	if _, err := tx.Exec(ctx, updateQuery, orderID, status, history.CreatedAt); err != nil {
+		return err
+	}
+
+	// Every move leaves an audit trail row for the history endpoint.
+	historyQuery := `
+		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	if _, err := tx.Exec(ctx, historyQuery, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresOrderRepository) GetStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.OrderStatusHistory, error) {
+	query := `
+		SELECT id, order_id, status, source, event_id, created_at
+		FROM order_status_history
+		WHERE order_id = $1
+		ORDER BY created_at
+	`
+	rows, err := r.pool.Query(ctx, query, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []domain.OrderStatusHistory
+	for rows.Next() {
+		var h domain.OrderStatusHistory
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Source, &h.EventID, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
+
+func (r *PostgresOrderRepository) scanOrder(row core_database.Row) (*domain.Order, error) {
+	var order domain.Order
+	err := row.Scan(
+		&order.ID, &order.UserID, &order.RestaurantID, &order.ExternalOrderID,
+		&order.Status, &order.TotalAmount, &order.DeliveryAddress,
+		&order.IdempotencyKey, &order.CreatedAt, &order.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (r *PostgresOrderRepository) loadOrderDetails(ctx context.Context, order *domain.Order) (*domain.Order, error) {
+	itemsQuery := `
+		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at
+		FROM order_items
+		WHERE order_id = $1
+	`
+	rows, err := r.pool.Query(ctx, itemsQuery, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item domain.OrderItem
+		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		order.Items = append(order.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	history, err := r.GetStatusHistory(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	order.StatusHistory = history
+
+	return order, nil
+}
+
+var _ OrderRepository = (*PostgresOrderRepository)(nil)

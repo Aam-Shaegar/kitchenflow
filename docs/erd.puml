@@ -1,0 +1,110 @@
+@startuml
+hide methods
+hide stereotypes
+
+entity restaurants {
+  * id : uuid <<PK>>
+  --
+  * external_id : text <<UQ>>
+  * name : text
+  description : text
+  * is_open : boolean
+  * integration_base_url : text
+}
+
+entity menu_categories {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * name : text
+  position : int
+}
+
+entity menu_items {
+  * id : uuid <<PK>>
+  --
+  * restaurant_id : uuid <<FK>>
+  * category_id : uuid <<FK>>
+  * external_id : text
+  * name : text
+  * price : bigint <<kopecks>>
+  * is_available : boolean
+  --
+  <<UQ>> (restaurant_id, external_id)
+}
+
+entity carts {
+  * id : uuid <<PK>>
+  --
+  * user_id : text <<UQ>>
+  * restaurant_id : uuid <<FK>>
+  note: "single active cart per user"
+}
+
+entity cart_items {
+  * id : uuid <<PK>>
+  --
+  * cart_id : uuid <<FK>>
+  * menu_item_id : uuid <<FK>>
+  * name : text <<snapshot>>
+  * unit_price : bigint <<kopecks>>
+  * quantity : int
+  * total_price : bigint <<kopecks>>
+  --
+  <<UQ>> (cart_id, menu_item_id)
+}
+
+entity orders {
+  * id : uuid <<PK>>
+  --
+  * user_id : text
+  * restaurant_id : uuid <<FK>>
+  external_order_id : text
+  * status : order_status
+  * total_amount : bigint <<kopecks>>
+  * delivery_address : text
+  * idempotency_key : text
+  --
+  <<UQ>> (user_id, idempotency_key)
+  <<UQ>> (restaurant_id, external_order_id)
+}
+
+entity order_items {
+  * id : uuid <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  * menu_item_id : uuid <<FK>>
+  * name : text <<snapshot>>
+  * unit_price : bigint <<snapshot, kopecks>>
+  * quantity : int
+  * total_price : bigint <<kopecks>>
+}
+
+entity order_status_history {
+  * id : bigint <<PK>>
+  --
+  * order_id : uuid <<FK>>
+  * status : order_status
+  * source : text
+  * event_id : text
+  * created_at : timestamptz
+  --
+  <<UQ>> (event_id) where event_id is not null
+}
+
+entity schema_migrations {
+  * filename : text <<PK>>
+  created_at : timestamptz
+}
+
+restaurants ||--o{ menu_categories
+menu_categories ||--o{ menu_items
+restaurants ||--o{ menu_items
+restaurants ||--o{ carts
+carts ||--o{ cart_items
+menu_items ||--o{ cart_items
+restaurants ||--o{ orders
+orders ||--o{ order_items
+menu_items ||--o{ order_items
+orders ||--o{ order_status_history
+@enduml

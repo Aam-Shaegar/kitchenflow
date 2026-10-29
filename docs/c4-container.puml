@@ -1,0 +1,18 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+Person(user, "User", "Browses restaurants and creates food orders")
+System_Boundary(kitchen, "KitchenFlow") {
+  Container(web, "Web Client", "Browser", "Calls Kitchen API")
+  Container(api, "Kitchen API", "Go", "REST API, business logic and orchestration")
+  ContainerDb(db, "PostgreSQL", "PostgreSQL", "Restaurants, menus, carts and orders")
+}
+System(restaurant, "Restaurant Service", "Example integrated restaurant")
+
+Rel(user, web, "Uses")
+Rel(web, api, "HTTP/JSON")
+Rel(api, db, "SQL")
+Rel(api, restaurant, "HTTP/JSON")
+Rel(restaurant, api, "Order status callbacks")
+@enduml

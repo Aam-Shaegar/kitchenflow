@@ -1,0 +1,68 @@
+run:
+  timeout: 5m
+  go: "1.25"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gofmt
+    - misspell
+    - unparam
+    - nakedret
+    - prealloc
+    - bodyclose
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - errorlint
+  disable:
+    - gocyclo
+    - goconst
+    - dupl
+    - gocritic
+    - wrapcheck
+    - exhaustruct
+    - exhaustive
+    - goimports
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - "Tx.Rollback"
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+      - shadow
+  staticcheck:
+    checks: ["all", "-SA1019"]
+  gofmt:
+    simplify: true
+  errorlint:
+    errorf: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+    - path: cmd/
+      linters:
+        - gosec
+        - noctx
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true

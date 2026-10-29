@@ -1,0 +1,7 @@
+.git
+.vscode
+logs
+*.log
+.env
+postgres_data
+bin

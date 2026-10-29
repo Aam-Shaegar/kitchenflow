@@ -1,0 +1,19 @@
+@startuml
+|Restaurant|
+start
+:Onboard via POST /restaurants;
+:Manage menu (categories/items CRUD);
+:Set availability (item is_available, restaurant is_open);
+:Receive order from Kitchen API\nPOST /api/v1/restaurant/orders;
+:Validate order data;
+if (Can fulfill?) then (yes)
+  :Accept order (201 confirmed);
+  :Send callbacks with unique event_id:\nconfirmed → preparing → ready → delivering → delivered;
+else (no)
+  :Return 201 cancelled + callback cancelled;
+endif
+
+:Kitchen validates transition;\ninvalid => 409, duplicate event_id => 204 idempotent;
+:Monitor incoming orders\nGET /restaurants/{id}/orders;
+stop
+@enduml

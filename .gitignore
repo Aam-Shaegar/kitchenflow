@@ -1,0 +1,28 @@
+# Binaries
+*.exe
+*.out
+*.test
+
+# Build artifacts
+bin/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+
+# Coverage
+coverage.out
+coverage.html
+
+# OS
+.DS_Store
+
+# Logs
+logs/
+*.log

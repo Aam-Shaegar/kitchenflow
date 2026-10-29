@@ -1,0 +1,44 @@
+@startuml
+|User|
+start
+:Open KitchenFlow;
+:View restaurants (filter open);
+:Choose restaurant;
+:View menu (filter available);
+:Add dishes to cart;
+note right: single active cart;\nadding another restaurant => 409,\nclear cart first
+:Open cart;
+:Set quantity / remove / clear;
+
+if (Restaurant open?) then (yes)
+  if (All items available?) then (yes)
+    :Enter delivery address (5..500 chars);
+    :Create order with Idempotency-Key;
+    if (Restaurant integration succeeds?) then (yes)
+      :See order pending;
+      :Track confirmed → preparing → ready → delivering → delivered;
+      if (Need to cancel?) then (yes)
+        if (pending/confirmed?) then (yes)
+          :POST /orders/{id}/cancel;
+        else (no)
+          :Cancel rejected (409);
+        endif
+      endif
+    else (no)
+      :See integration_failed;
+      :POST /orders/{id}/retry;
+    endif
+    if (Duplicate request?) then (yes)
+      :Same Idempotency-Key returns same order;
+    endif
+  else (no)
+    :See unavailable items (409);
+    :Edit cart;
+  endif
+else (no)
+  :Cannot checkout (409);
+endif
+
+:View order history / status history;
+stop
+@enduml

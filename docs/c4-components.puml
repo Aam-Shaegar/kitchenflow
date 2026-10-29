@@ -1,0 +1,29 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+LAYOUT_WITH_LEGEND()
+
+Container_Boundary(api, "Kitchen API") {
+  Component(http, "HTTP Handlers", "Go net/http/chi", "Serialization, validation, transport")
+  Component(restaurants, "Restaurant Service", "Go", "Restaurant business rules")
+  Component(menu, "Menu Service", "Go", "Menu queries and availability")
+  Component(cart, "Cart Service", "Go", "Cart operations and validation")
+  Component(orders, "Order Service", "Go", "Checkout, state machine and idempotency")
+  Component(repo, "Repository Implementations", "Go + pgx", "Persistence")
+  Component(integration, "Restaurant Client", "Go", "External restaurant API adapter")
+}
+
+ContainerDb(db, "PostgreSQL", "PostgreSQL")
+System(restaurant, "Restaurant Service", "External restaurant")
+
+Rel(http, restaurants, "calls")
+Rel(http, menu, "calls")
+Rel(http, cart, "calls")
+Rel(http, orders, "calls")
+Rel(restaurants, repo, "uses")
+Rel(menu, repo, "uses")
+Rel(cart, repo, "uses")
+Rel(orders, repo, "uses")
+Rel(orders, integration, "uses")
+Rel(repo, db, "SQL")
+Rel(integration, restaurant, "HTTP")
+@enduml
