@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
+	core_errors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
+	"github.com/google/uuid"
 )
 
 type PostgresOrderRepository struct {
@@ -424,14 +425,23 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 		return err
 	}
 
-	// Idempotency goes first on purpose: a replayed event is fine even if the
-	// order has already moved past that state.
+	if history.OrderID != orderID || history.Status != status {
+		return core_errors.ErrInvalidArgument
+	}
+
+	// Event IDs are globally unique. Only an identical event for this order
+	// is a replay; reusing an ID for another order or payload is a conflict.
 	if history.EventID != nil {
-		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
-		var exists int
-		err = tx.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
+		var savedOrderID uuid.UUID
+		var savedStatus domain.OrderStatus
+		var savedSource string
+		err := tx.QueryRow(ctx, `
+			SELECT order_id, status, source FROM order_status_history WHERE event_id = $1
+		`, *history.EventID).Scan(&savedOrderID, &savedStatus, &savedSource)
 		if err == nil {
-			// Duplicate EventID - already processed, return success (idempotent)
+			if savedOrderID != orderID || savedStatus != status || savedSource != history.Source {
+				return core_errors.ErrConflict
+			}
 			return nil
 		}
 		if !errors.Is(err, core_database.ErrNoRows) {
@@ -439,31 +449,34 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 		}
 	}
 
-	// The state machine lives in the domain package; the repository only
-	// re-checks it under row lock so concurrent callbacks cannot slip through.
-	if !domain.CanTransition(currentStatus, status) {
-		// Return domain error so HTTP layer maps it to 409 Conflict.
-		_ = tx.Rollback(ctx)
+	// A new callback may report the current state. Record its event ID without
+	// changing updated_at; ordinary transitions still use the domain rules.
+	sameStateCallback := history.EventID != nil && currentStatus == status
+	if !sameStateCallback && !domain.CanTransition(currentStatus, status) {
 		return &domain.OrderStatusTransitionError{From: currentStatus, To: status}
 	}
 
-	// Move the order forward and stamp the transition time.
-	updateQuery := `
-		UPDATE orders
-		SET status = $2, updated_at = $3
-		WHERE id = $1
-	`
-	if _, err := tx.Exec(ctx, updateQuery, orderID, status, history.CreatedAt); err != nil {
+	// A different order may concurrently claim the same event ID. The unique
+	// index resolves that race; a collision rolls back the entire transaction.
+	var historyID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING
+		RETURNING id
+	`, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt).Scan(&historyID)
+	if errors.Is(err, core_database.ErrNoRows) {
+		return core_errors.ErrConflict
+	}
+	if err != nil {
 		return err
 	}
 
-	// Every move leaves an audit trail row for the history endpoint.
-	historyQuery := `
-		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`
-	if _, err := tx.Exec(ctx, historyQuery, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt); err != nil {
-		return err
+	if !sameStateCallback {
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status = $2, updated_at = $3 WHERE id = $1`,
+			orderID, status, history.CreatedAt); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit(ctx)

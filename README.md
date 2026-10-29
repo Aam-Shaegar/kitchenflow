@@ -419,6 +419,19 @@ curl -s -X POST http://localhost:8080/api/v1/orders \
   -d '{"delivery_address":"Moscow, Tverskaya 1"}'
 ```
 
+### PostgreSQL callback regression tests
+
+Set `KITCHENFLOW_TEST_DATABASE_URL` to a disposable PostgreSQL database and run:
+
+```bash
+KITCHENFLOW_TEST_DATABASE_URL='postgres://postgres:password@localhost:5432/kitchenflow_test?sslmode=disable' \
+  go test -race ./internal/features/orders/repository ./internal/features/orders/service
+```
+
+The database tests create and drop a unique test schema and require schema/extension
+creation privileges. Without this variable, PostgreSQL tests are explicitly skipped.
+They cover callback replays after later transitions, concurrent duplicates and event ID collisions.
+
 ## Static Analysis
 
 ```bash

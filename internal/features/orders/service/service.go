@@ -13,8 +13,8 @@ import (
 	cart_repository "github.com/Aam-Shaegar/kitchenflow/internal/features/cart/repository"
 	orders_repository "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/repository"
 
-	"github.com/google/uuid"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
+	"github.com/google/uuid"
 )
 
 type MenuProvider interface {
@@ -384,22 +384,9 @@ func (s *OrderService) HandleRestaurantCallback(ctx context.Context, restaurantI
 		return errors.ErrNotFound
 	}
 
-	// The restaurant may resend the state we already have; treat it as delivered.
-	if order.Status == newStatus {
-		dedup := &orders_domain.OrderStatusHistory{
-			OrderID:   order.ID,
-			Status:    newStatus,
-			Source:    "restaurant",
-			EventID:   &callback.EventID,
-			CreatedAt: time.Now(),
-		}
-		_ = s.repo.AddStatusHistory(ctx, dedup)
-		return nil
-	}
-
-	if !orders_domain.CanTransition(order.Status, newStatus) {
-		return &orders_domain.OrderStatusTransitionError{From: order.Status, To: newStatus}
-	}
+	// Deduplication and transition validation must share the repository's row
+	// lock. A service-level status check would reject replays of older events
+	// and race with callbacks advancing the same order.
 
 	eventID := callback.EventID
 	history := orders_domain.OrderStatusHistory{
