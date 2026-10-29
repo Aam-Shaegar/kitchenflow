@@ -129,6 +129,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 	now := time.Now()
 	var totalAmount int64
 	orderID := uuid.New()
+	externalID := orderID.String()
 	orderItems := make([]orders_domain.OrderItem, len(cart.Items))
 	integrationItems := make([]integrations_domain.CreateOrderItem, len(cart.Items))
 
@@ -158,6 +159,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 
 	order := &orders_domain.Order{
 		ID:              orderID,
+		ExternalOrderID: &externalID,
 		UserID:          userID,
 		RestaurantID:    cart.RestaurantID,
 		Status:          orders_domain.OrderStatusPending,
@@ -197,37 +199,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		DeliveryAddress: deliveryAddress,
 	}
 
-	resp, err := s.restaurantClient.CreateOrder(ctx, integrationReq)
-	if err != nil {
-		order.Status = orders_domain.OrderStatusIntegrationFailed
-		order.UpdatedAt = time.Now()
-		if updateErr := s.repo.Update(ctx, order); updateErr != nil {
-			return nil, updateErr
-		}
-		if historyErr := s.repo.AddStatusHistory(ctx, &orders_domain.OrderStatusHistory{
-			OrderID:   order.ID,
-			Status:    orders_domain.OrderStatusIntegrationFailed,
-			Source:    "kitchen",
-			EventID:   nil,
-			CreatedAt: time.Now(),
-		}); historyErr != nil {
-			return nil, historyErr
-		}
-		// Re-read so the caller sees real history ids from the database,
-		// not the in-memory placeholder with id 0.
-		fresh, err := s.repo.GetByIDAndUserID(ctx, order.ID, userID)
-		if err != nil {
-			return nil, err
-		}
-		if fresh != nil {
-			return fresh, nil
-		}
-		return order, nil
-	}
-
-	order.ExternalOrderID = &resp.ExternalOrderID
-	order.UpdatedAt = time.Now()
-	if err := s.repo.UpdateOrderAndDeleteCart(ctx, order, cart.ID); err != nil {
+	if err := s.sendOrder(ctx, order.ID, integrationReq, &cart.ID); err != nil {
 		return nil, err
 	}
 
@@ -344,28 +316,34 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 			Quantity:           item.Quantity,
 		}
 	}
-	resp, err := s.restaurantClient.CreateOrder(ctx, integrations_domain.CreateOrderRequest{
-		ExternalOrderID: order.ID.String(),
-		Items:           integrationItems,
-		DeliveryAddress: order.DeliveryAddress,
-	})
-	if err != nil {
-		return order, nil
+	externalID := order.ID.String()
+	if order.ExternalOrderID != nil {
+		externalID = *order.ExternalOrderID
 	}
-	order.ExternalOrderID = &resp.ExternalOrderID
-	order.Status = orders_domain.OrderStatusPending
-	order.UpdatedAt = time.Now()
-	if err := s.repo.Update(ctx, order); err != nil {
+	if err := s.repo.PrepareIntegrationRetry(ctx, order.ID, externalID); err != nil {
 		return nil, err
 	}
-	_ = s.repo.AddStatusHistory(ctx, &orders_domain.OrderStatusHistory{
-		OrderID:   order.ID,
-		Status:    orders_domain.OrderStatusPending,
-		Source:    "kitchen",
-		EventID:   nil,
-		CreatedAt: time.Now(),
-	})
+	if err := s.sendOrder(ctx, order.ID, integrations_domain.CreateOrderRequest{
+		ExternalOrderID: externalID, Items: integrationItems, DeliveryAddress: order.DeliveryAddress,
+	}, nil); err != nil {
+		return nil, err
+	}
+
 	return s.repo.GetByIDAndUserID(ctx, id, userID)
+}
+
+// The restaurant must echo our correlation ID, including in early callbacks.
+// Malformed responses are treated as failed attempts rather than accepted orders.
+func (s *OrderService) sendOrder(ctx context.Context, orderID uuid.UUID, req integrations_domain.CreateOrderRequest, cartID *uuid.UUID) error {
+	resp, err := s.restaurantClient.CreateOrder(ctx, req)
+	status := orders_domain.OrderStatusIntegrationFailed
+	if err == nil && resp != nil && resp.ExternalOrderID == req.ExternalOrderID {
+		switch orders_domain.OrderStatus(resp.Status) {
+		case orders_domain.OrderStatusPending, orders_domain.OrderStatusConfirmed, orders_domain.OrderStatusCancelled:
+			status = orders_domain.OrderStatus(resp.Status)
+		}
+	}
+	return s.repo.SaveIntegrationResult(ctx, orderID, req.ExternalOrderID, status, cartID)
 }
 
 func (s *OrderService) HandleRestaurantCallback(ctx context.Context, restaurantID uuid.UUID, callback OrderStatusCallback) error {

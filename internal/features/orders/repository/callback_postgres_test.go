@@ -66,7 +66,7 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO restaurants(id,external_id,name,integration_base_url) VALUES($1,$2,'Test','http://restaurant')`, rid, rid.String()); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO orders(id,user_id,restaurant_id,status,total_amount,delivery_address,idempotency_key) VALUES($1,'user',$2,'pending',100,'Test address',$3)`, id, rid, id.String()); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO orders(id,user_id,restaurant_id,status,total_amount,delivery_address,idempotency_key,external_order_id) VALUES($1,'user',$2,'pending',100,'Test address',$3,$3)`, id, rid, id.String()); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -84,6 +84,124 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			t.Fatalf("status/history: %s/%d, want %s/%d", order.Status, len(order.StatusHistory), status, count)
 		}
 	}
+	t.Run("cart follows reconciled result", func(t *testing.T) {
+		for _, status := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusCancelled, d.OrderStatusIntegrationFailed} {
+			id := newOrder()
+			order, err := repository.GetByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cartID := uuid.New()
+			if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, cartID.String(), order.RestaurantID); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, &cartID); err != nil {
+				t.Fatal(err)
+			}
+			var count int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM carts WHERE id=$1`, cartID).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if status == d.OrderStatusIntegrationFailed {
+				want = 1
+			}
+			if count != want {
+				t.Fatalf("status=%s cart count=%d want=%d", status, count, want)
+			}
+		}
+	})
+
+	t.Run("HTTP acceptance and rejection", func(t *testing.T) {
+		for _, status := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusCancelled} {
+			id := newOrder()
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, nil); err != nil {
+				t.Fatal(err)
+			}
+			assertState(id, status, 1)
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, nil); err != nil {
+				t.Fatal(err)
+			}
+			assertState(id, status, 1)
+		}
+	})
+	t.Run("early callback beats stale HTTP result", func(t *testing.T) {
+		for _, result := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusIntegrationFailed} {
+			id := newOrder()
+			order, err := repository.GetByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found, err := repository.GetByExternalOrderIDAndRestaurantID(ctx, id.String(), order.RestaurantID)
+			if err != nil || found == nil {
+				t.Fatalf("early lookup: %v", err)
+			}
+			if err := apply(id, d.OrderStatusConfirmed, uuid.NewString()); err != nil {
+				t.Fatal(err)
+			}
+			if err := apply(id, d.OrderStatusPreparing, uuid.NewString()); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), result, nil); err != nil {
+				t.Fatal(err)
+			}
+			assertState(id, d.OrderStatusPreparing, 2)
+		}
+	})
+	t.Run("rejected callback beats response", func(t *testing.T) {
+		id := newOrder()
+		if err := apply(id, d.OrderStatusCancelled, uuid.NewString()); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil); err != nil {
+			t.Fatal(err)
+		}
+		assertState(id, d.OrderStatusCancelled, 1)
+	})
+	t.Run("retry exposes pending correlation before callback", func(t *testing.T) {
+		id := newOrder()
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusIntegrationFailed, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.PrepareIntegrationRetry(ctx, id, id.String()); err != nil {
+			t.Fatal(err)
+		}
+		if err := apply(id, d.OrderStatusConfirmed, uuid.NewString()); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil); err != nil {
+			t.Fatal(err)
+		}
+		assertState(id, d.OrderStatusConfirmed, 3)
+	})
+	t.Run("concurrent response and callback", func(t *testing.T) {
+		id := newOrder()
+		errs := make(chan error, 2)
+		go func() { errs <- apply(id, d.OrderStatusConfirmed, uuid.NewString()) }()
+		go func() { errs <- repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil) }()
+		for i := 0; i < 2; i++ {
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		}
+		order, err := repository.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if order.Status != d.OrderStatusConfirmed {
+			t.Fatalf("status: %s", order.Status)
+		}
+		events := 0
+		for _, h := range order.StatusHistory {
+			if h.EventID != nil {
+				events++
+			}
+		}
+		if events != 1 {
+			t.Fatalf("callback history entries: %d", events)
+		}
+	})
+
 	t.Run("replay after later transition", func(t *testing.T) {
 		id := newOrder()
 		event := uuid.NewString()

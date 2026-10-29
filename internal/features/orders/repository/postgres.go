@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
 	core_errors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
@@ -323,33 +324,73 @@ func (r *PostgresOrderRepository) Update(ctx context.Context, order *domain.Orde
 	return err
 }
 
-func (r *PostgresOrderRepository) UpdateOrderAndDeleteCart(ctx context.Context, order *domain.Order, cartID uuid.UUID) error {
+// PrepareIntegrationRetry publishes the correlation ID and pending state before
+// calling the restaurant, so callbacks can arrive before its HTTP response.
+func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // rollback after commit is a harmless no-op
-
-	// Persist the new external id and status first.
-	updateQuery := `
-		UPDATE orders
-		SET external_order_id = $2, status = $3, total_amount = $4, updated_at = $5
-		WHERE id = $1
-	`
-	if _, err := tx.Exec(ctx, updateQuery,
-		order.ID, order.ExternalOrderID, order.Status,
-		order.TotalAmount, order.UpdatedAt,
-	); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	var current domain.OrderStatus
+	if err = tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&current); err != nil {
 		return err
 	}
-
-	// The cart served its purpose: a successful checkout always clears it in the same tx.
-	deleteCartQuery := `DELETE FROM carts WHERE id = $1`
-	if _, err := tx.Exec(ctx, deleteCartQuery, cartID); err != nil {
+	if current != domain.OrderStatusIntegrationFailed {
+		return core_errors.ErrConflict
+	}
+	now := time.Now().UTC()
+	if _, err = tx.Exec(ctx, `UPDATE orders SET external_order_id=$2,status='pending',updated_at=$3 WHERE id=$1`, orderID, externalID, now); err != nil {
 		return err
 	}
-
+	if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,'pending','kitchen',$2)`, orderID, now); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// SaveIntegrationResult reconciles the HTTP result with callbacks under the same
+// row lock. Only a still-pending order may be changed by the creation response.
+func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus, cartID *uuid.UUID) error {
+	if status != domain.OrderStatusPending && status != domain.OrderStatusConfirmed && status != domain.OrderStatusCancelled && status != domain.OrderStatusIntegrationFailed {
+		return core_errors.ErrInvalidArgument
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var current domain.OrderStatus
+	var savedExternalID *string
+	if err = tx.QueryRow(ctx, `SELECT status,external_order_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&current, &savedExternalID); err != nil {
+		return err
+	}
+	if savedExternalID == nil || *savedExternalID != externalID {
+		return core_errors.ErrConflict
+	}
+	if current == domain.OrderStatusPending && status != current {
+		now := time.Now().UTC()
+		if _, err = tx.Exec(ctx, `UPDATE orders SET status=$2,updated_at=$3 WHERE id=$1`, orderID, status, now); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,$2,$3,$4)`, orderID, status, integrationResultSource(status), now); err != nil {
+			return err
+		}
+	}
+	// A callback proves receipt even if the HTTP request timed out afterwards.
+	if cartID != nil && (status != domain.OrderStatusIntegrationFailed || current != domain.OrderStatusPending) {
+		if _, err = tx.Exec(ctx, `DELETE FROM carts WHERE id=$1`, *cartID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func integrationResultSource(status domain.OrderStatus) string {
+	if status == domain.OrderStatusIntegrationFailed {
+		return "kitchen"
+	}
+	return "restaurant"
 }
 
 func (r *PostgresOrderRepository) createOrderItemTx(ctx context.Context, tx core_database.Tx, item *domain.OrderItem) error {

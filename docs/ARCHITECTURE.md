@@ -141,7 +141,7 @@ HTTP и не импортирует pgx. Репозиторий знает SQL, 
      разруливает база, а не код.
    - Зовет ресторан по HTTP. Упал ресторан — заказ остается в
      `integration_failed`, его потом поднимет `POST /orders/{id}/retry`.
-     Успех — пишет `external_order_id` и удаляет корзину в той же транзакции.
+     ID корреляции сохраняется до HTTP-запроса. Успех — согласует статус ответа с уже полученными колбэками, пишет историю и удаляет корзину в одной транзакции.
    - Перечитывает заказ из БД, чтобы вернуть настоящие `id` истории
      (а не in-memory `0`).
 4. **Репозиторий** (`orders/repository/postgres.go`). Только SQL через узкий
@@ -369,14 +369,14 @@ restaurantClient)` — это ручная подстановка зависим
   `GetByUserIDAndIdempotencyKey`, `GetByExternalOrderIDAndRestaurantID`,
   пагинированные листы, `Update`, `CreateWithIdempotencyKey`,
   `UpdateStatusWithHistory`, `AddStatusHistory`, `GetStatusHistory`,
-  `UpdateOrderAndDeleteCart`. Удалены `Create`, `CreateWithItems`,
+  `SaveIntegrationResult`. Удалены `Create`, `CreateWithItems`,
   `GetByExternalOrderID` без ресторана, непагинированный `ListByUserID`.
   Реализация: `CreateWithIdempotencyKey` — одна транзакция
   (`INSERT ... ON CONFLICT DO NOTHING RETURNING` + товары + история + commit);
   конфликт — чтение победителя в той же транзакции. `UpdateStatusWithHistory` —
   `SELECT ... FOR UPDATE`, сначала проверка дубликата `event_id`, потом
   `domain.CanTransition` под локом (гонка двух колбэков сериализуется),
-  затем апдейт + история + commit. `UpdateOrderAndDeleteCart` — внешний id
+  затем апдейт + история + commit. `SaveIntegrationResult` — внешний id
   и очистка корзины атомарно: деньги и корзина не расходятся.
 - `service/service.go` — `CreateOrder` (валидация, возврат идемпотентного
   дубликата, перечитывание меню, проверки доступности/ресторана/открытости,

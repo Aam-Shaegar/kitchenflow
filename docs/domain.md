@@ -60,7 +60,7 @@ non-empty returns `409 Conflict`; the client must `DELETE /cart` first. Quantiti
 
 ### Order
 
-Canonical order in Kitchen. Stores internal id plus restaurant external order id once created. Stores status and totals **in minor units (kopecks, `BIGINT`)**. Supports user cancel from
+Canonical order in Kitchen. Stores an internal ID and a correlation external order ID before contacting the restaurant. Restaurants echo this ID in responses and callbacks. Stores status and totals **in minor units (kopecks, `BIGINT`)**. Supports user cancel from
 `pending`/`confirmed` and retry of `integration_failed` via dedicated endpoints.
 
 ### OrderItem

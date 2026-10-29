@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"github.com/google/uuid"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
+	"github.com/google/uuid"
 )
 
 type OrderRepository interface {
@@ -19,5 +19,6 @@ type OrderRepository interface {
 	UpdateStatusWithHistory(ctx context.Context, orderID uuid.UUID, status domain.OrderStatus, history *domain.OrderStatusHistory) error
 	AddStatusHistory(ctx context.Context, history *domain.OrderStatusHistory) error
 	GetStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.OrderStatusHistory, error)
-	UpdateOrderAndDeleteCart(ctx context.Context, order *domain.Order, cartID uuid.UUID) error
+	PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error
+	SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus, cartID *uuid.UUID) error
 }

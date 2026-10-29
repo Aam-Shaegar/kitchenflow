@@ -297,12 +297,19 @@ See `api/openapi.yaml` for the complete OpenAPI 3.0 specification.
 
 ### Integration Flow
 
-1. Kitchen API creates order locally in `pending` status (transaction + idempotency guard)
+1. Kitchen API creates the order in `pending`, persisting its correlation `external_order_id` (the order UUID) before any HTTP request.
 2. Kitchen API sends `POST /api/v1/restaurant/orders` to restaurant service
-3. Restaurant responds `201 {external_order_id, status}` and stores the order
-4. Kitchen API stores `external_order_id`, clears the cart
-5. Restaurant sends `confirmed → preparing → ready → delivering → delivered` callbacks with unique `event_id`
+3. Restaurant stores the order and responds `201 {external_order_id, status}`. It must echo the supplied ID; accepted initial statuses are `pending`, `confirmed`, and `cancelled`.
+4. Kitchen API atomically records the response status and history and clears the original cart. A callback may arrive before the HTTP response; reconciliation never overwrites a status already advanced by a callback.
+5. Restaurant sends status callbacks using the supplied `external_order_id` and unique `event_id`. If the HTTP response already confirmed the order, callbacks may continue with `preparing → ready → delivering → delivered`.
 6. Kitchen validates transitions (`pending → confirmed → ...`, `cancelled` only early); duplicates => `204`, invalid => `409`
+
+Timeouts and malformed responses leave a still-pending order in `integration_failed`.
+If a callback has already advanced the order, its status is preserved instead.
+Retry publishes the pending state and correlation ID before contacting the restaurant,
+then reconciles the response under the same rules. Existing records without an
+external ID receive one when retried. Recovery after process crashes and callbacks
+arriving only after a failed attempt remain separate reliability work.
 
 ### Mock Modes (`MOCK_MODE`)
 
