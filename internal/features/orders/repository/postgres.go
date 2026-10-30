@@ -148,7 +148,7 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 	// Consume only the original cart when the durable order is created. HTTP
 	// responses and retries never touch carts created for subsequent purchases.
 	if order.CheckoutCartID != nil {
-		tag, err := tx.Exec(ctx, `DELETE FROM carts WHERE id=$1 AND user_id=$2 AND restaurant_id=$3`, *order.CheckoutCartID, order.UserID, order.RestaurantID)
+		tag, err := tx.Exec(ctx, `DELETE FROM carts WHERE id=$1 AND user_id=$2 AND restaurant_id=$3 AND revision=$4`, *order.CheckoutCartID, order.UserID, order.RestaurantID, order.CheckoutCartRevision)
 		if err != nil {
 			return nil, err
 		}

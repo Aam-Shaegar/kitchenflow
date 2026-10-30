@@ -7,6 +7,7 @@ import (
 )
 
 type Cart struct {
+	Revision     int64      `json:"-"`
 	ID           uuid.UUID  `json:"id"`
 	UserID       string     `json:"user_id"`
 	RestaurantID uuid.UUID  `json:"restaurant_id"`

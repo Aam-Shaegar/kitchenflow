@@ -66,6 +66,13 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 	if _, err := pool.Exec(ctx, string(snapshotMigration)); err != nil {
 		t.Fatal(err)
 	}
+	revisionMigration, err := os.ReadFile("../../../../migrations/006_cart_revision.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(revisionMigration)); err != nil {
+		t.Fatal(err)
+	}
 	repository := repo.NewOrderRepository(pool)
 	newOrder := func() uuid.UUID {
 		t.Helper()
@@ -143,6 +150,104 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		}
 		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
 			t.Fatal("transactional read lost partner ID")
+		}
+	})
+	t.Run("one cart creates only one order with different keys", func(t *testing.T) {
+		seed := newOrder()
+		parent, err := repository.GetByID(ctx, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		user := uuid.NewString()
+		cartID := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, user, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		results := make(chan error, 10)
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				now := time.Now()
+				o := &d.Order{ID: uuid.New(), UserID: user, RestaurantID: parent.RestaurantID, CheckoutCartID: &cartID, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+				_, err := repository.CreateWithIdempotencyKey(ctx, o)
+				results <- err
+			}()
+		}
+		wg.Wait()
+		close(results)
+		winners := 0
+		for err := range results {
+			if err == nil {
+				winners++
+			} else if !errors.Is(err, coreerrors.ErrConflict) {
+				t.Fatal(err)
+			}
+		}
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM orders WHERE user_id=$1`, user).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if winners != 1 || count != 1 {
+			t.Fatalf("winners=%d orders=%d", winners, count)
+		}
+	})
+	t.Run("item mutations invalidate checkout snapshot", func(t *testing.T) {
+		seed := newOrder()
+		parent, err := repository.GetByID(ctx, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		user := uuid.NewString()
+		cartID, categoryID, itemID, lineID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, user, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_categories(id,restaurant_id,name) VALUES($1,$2,'Category')`, categoryID, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_items(id,restaurant_id,category_id,external_id,name,price) VALUES($1,$2,$3,'partner','Item',100)`, itemID, parent.RestaurantID, categoryID); err != nil {
+			t.Fatal(err)
+		}
+		var previous int64
+		for _, sql := range []string{
+			`INSERT INTO cart_items(id,cart_id,menu_item_id,name,unit_price,quantity,total_price) VALUES($1,$2,$3,'Item',100,1,100)`,
+			`UPDATE cart_items SET quantity=2,total_price=200 WHERE id=$1 AND cart_id=$2 AND menu_item_id=$3`,
+			`DELETE FROM cart_items WHERE id=$1 AND cart_id=$2 AND menu_item_id=$3`,
+		} {
+			if _, err := pool.Exec(ctx, sql, lineID, cartID, itemID); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			o := &d.Order{ID: uuid.New(), UserID: user, RestaurantID: parent.RestaurantID, CheckoutCartID: &cartID, CheckoutCartRevision: previous, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+			if _, err := repository.CreateWithIdempotencyKey(ctx, o); !errors.Is(err, coreerrors.ErrConflict) {
+				t.Fatalf("stale checkout: %v", err)
+			}
+			var revision int64
+			if err := pool.QueryRow(ctx, `SELECT revision FROM carts WHERE id=$1`, cartID).Scan(&revision); err != nil {
+				t.Fatal(err)
+			}
+			if revision != previous+1 {
+				t.Fatalf("revision %d after %d", revision, previous)
+			}
+			previous = revision
+		}
+
+		if _, err := pool.Exec(ctx, `INSERT INTO cart_items(id,cart_id,menu_item_id,name,unit_price,quantity,total_price) VALUES($1,$2,$3,'Item',100,1,100)`, lineID, cartID, itemID); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		current := &d.Order{ID: uuid.New(), UserID: user, RestaurantID: parent.RestaurantID, CheckoutCartID: &cartID, CheckoutCartRevision: previous + 1, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+		if _, err := repository.CreateWithIdempotencyKey(ctx, current); err != nil {
+			t.Fatal(err)
+		}
+		var remaining int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM cart_items WHERE cart_id=$1`, cartID).Scan(&remaining); err != nil {
+			t.Fatal(err)
+		}
+		if remaining != 0 {
+			t.Fatal("consumed cart items remain")
 		}
 	})
 	t.Run("checkout consumes cart atomically and retries preserve new cart", func(t *testing.T) {

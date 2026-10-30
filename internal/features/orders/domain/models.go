@@ -21,12 +21,13 @@ const (
 
 type Order struct {
 	// CheckoutCartID is a transient command input, consumed atomically on creation.
-	CheckoutCartID  *uuid.UUID  `json:"-"`
-	ID              uuid.UUID   `json:"id"`
-	UserID          string      `json:"user_id"`
-	RestaurantID    uuid.UUID   `json:"restaurant_id"`
-	ExternalOrderID *string     `json:"external_order_id,omitempty"`
-	Status          OrderStatus `json:"status"`
+	CheckoutCartRevision int64       `json:"-"`
+	CheckoutCartID       *uuid.UUID  `json:"-"`
+	ID                   uuid.UUID   `json:"id"`
+	UserID               string      `json:"user_id"`
+	RestaurantID         uuid.UUID   `json:"restaurant_id"`
+	ExternalOrderID      *string     `json:"external_order_id,omitempty"`
+	Status               OrderStatus `json:"status"`
 	// TotalAmount is kept in minor units (kopecks) as int64, never float.
 	TotalAmount     int64                `json:"total_amount"`
 	DeliveryAddress string               `json:"delivery_address"`

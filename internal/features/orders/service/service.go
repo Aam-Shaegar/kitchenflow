@@ -166,19 +166,20 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 	}
 
 	order := &orders_domain.Order{
-		CheckoutCartID:  &cart.ID,
-		ID:              orderID,
-		ExternalOrderID: &externalID,
-		UserID:          userID,
-		RestaurantID:    cart.RestaurantID,
-		Status:          orders_domain.OrderStatusPending,
-		TotalAmount:     totalAmount,
-		DeliveryAddress: deliveryAddress,
-		IdempotencyKey:  idempotencyKey,
-		Items:           orderItems,
-		StatusHistory:   []orders_domain.OrderStatusHistory{},
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		CheckoutCartID:       &cart.ID,
+		CheckoutCartRevision: cart.Revision,
+		ID:                   orderID,
+		ExternalOrderID:      &externalID,
+		UserID:               userID,
+		RestaurantID:         cart.RestaurantID,
+		Status:               orders_domain.OrderStatusPending,
+		TotalAmount:          totalAmount,
+		DeliveryAddress:      deliveryAddress,
+		IdempotencyKey:       idempotencyKey,
+		Items:                orderItems,
+		StatusHistory:        []orders_domain.OrderStatusHistory{},
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 
 	history := orders_domain.OrderStatusHistory{

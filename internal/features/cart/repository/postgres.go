@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"github.com/google/uuid"
 
 	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
@@ -20,7 +21,7 @@ func NewCartRepository(pool core_database.Pool) *PostgresCartRepository {
 
 func (r *PostgresCartRepository) GetByUserID(ctx context.Context, userID string) (*domain.Cart, error) {
 	query := `
-		SELECT id, user_id, restaurant_id, created_at, updated_at
+		SELECT id, user_id, restaurant_id, created_at, updated_at, revision
 		FROM carts
 		WHERE user_id = $1
 		ORDER BY updated_at DESC
@@ -39,7 +40,7 @@ func (r *PostgresCartRepository) GetByUserID(ctx context.Context, userID string)
 
 func (r *PostgresCartRepository) GetByUserIDAndRestaurantID(ctx context.Context, userID string, restaurantID uuid.UUID) (*domain.Cart, error) {
 	query := `
-		SELECT id, user_id, restaurant_id, created_at, updated_at
+		SELECT id, user_id, restaurant_id, created_at, updated_at, revision
 		FROM carts
 		WHERE user_id = $1 AND restaurant_id = $2
 	`
@@ -69,7 +70,10 @@ func (r *PostgresCartRepository) Update(ctx context.Context, cart *domain.Cart) 
 		SET restaurant_id = $2, updated_at = $3
 		WHERE id = $1
 	`
-	_, err := r.pool.Exec(ctx, query, cart.ID, cart.RestaurantID, cart.UpdatedAt)
+	tag, err := r.pool.Exec(ctx, query, cart.ID, cart.RestaurantID, cart.UpdatedAt)
+	if err == nil && tag.RowsAffected() == 0 {
+		return coreerrors.ErrConflict
+	}
 	return err
 }
 
@@ -94,13 +98,19 @@ func (r *PostgresCartRepository) UpdateItem(ctx context.Context, item *domain.Ca
 		SET quantity = $2, total_price = $3, updated_at = $4
 		WHERE id = $1
 	`
-	_, err := r.pool.Exec(ctx, query, item.ID, item.Quantity, item.TotalPrice, item.UpdatedAt)
+	tag, err := r.pool.Exec(ctx, query, item.ID, item.Quantity, item.TotalPrice, item.UpdatedAt)
+	if err == nil && tag.RowsAffected() == 0 {
+		return coreerrors.ErrConflict
+	}
 	return err
 }
 
 func (r *PostgresCartRepository) RemoveItem(ctx context.Context, cartID, itemID uuid.UUID) error {
 	query := `DELETE FROM cart_items WHERE cart_id = $1 AND id = $2`
-	_, err := r.pool.Exec(ctx, query, cartID, itemID)
+	tag, err := r.pool.Exec(ctx, query, cartID, itemID)
+	if err == nil && tag.RowsAffected() == 0 {
+		return coreerrors.ErrConflict
+	}
 	return err
 }
 
@@ -121,7 +131,7 @@ func (r *PostgresCartRepository) GetItems(ctx context.Context, cartID uuid.UUID)
 
 func (r *PostgresCartRepository) scanCart(row core_database.Row) (*domain.Cart, error) {
 	var cart domain.Cart
-	err := row.Scan(&cart.ID, &cart.UserID, &cart.RestaurantID, &cart.CreatedAt, &cart.UpdatedAt)
+	err := row.Scan(&cart.ID, &cart.UserID, &cart.RestaurantID, &cart.CreatedAt, &cart.UpdatedAt, &cart.Revision)
 	if err != nil {
 		return nil, err
 	}

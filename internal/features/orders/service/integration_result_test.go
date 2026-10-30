@@ -90,7 +90,7 @@ func TestCreateOrderPersistsCorrelationAndUsesRestaurantResult(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rid, itemID := uuid.New(), uuid.New()
 			repo := &resultRepository{}
-			c := &cart.Cart{ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}
+			c := &cart.Cart{Revision: 7, ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}
 			client := resultClient(func(_ context.Context, q integration.CreateOrderRequest) (*integration.CreateOrderResponse, error) {
 				if repo.order == nil || repo.order.ExternalOrderID == nil || *repo.order.ExternalOrderID != q.ExternalOrderID {
 					t.Fatal("early callback cannot find persisted correlation")
@@ -111,6 +111,9 @@ func TestCreateOrderPersistsCorrelationAndUsesRestaurantResult(t *testing.T) {
 			}
 			if got.Status != tc.want || repo.result != tc.want {
 				t.Fatalf("status=%s want=%s", got.Status, tc.want)
+			}
+			if repo.order.CheckoutCartRevision != c.Revision {
+				t.Fatal("checkout revision missing")
 			}
 			if repo.order.CheckoutCartID == nil || *repo.order.CheckoutCartID != c.ID {
 				t.Fatal("original cart ID missing from atomic reconciliation")
