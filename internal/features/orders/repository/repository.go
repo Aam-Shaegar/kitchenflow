@@ -20,5 +20,5 @@ type OrderRepository interface {
 	AddStatusHistory(ctx context.Context, history *domain.OrderStatusHistory) error
 	GetStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.OrderStatusHistory, error)
 	PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error
-	SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus, cartID *uuid.UUID) error
+	SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus) error
 }

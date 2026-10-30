@@ -166,6 +166,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 	}
 
 	order := &orders_domain.Order{
+		CheckoutCartID:  &cart.ID,
 		ID:              orderID,
 		ExternalOrderID: &externalID,
 		UserID:          userID,
@@ -207,7 +208,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		DeliveryAddress: deliveryAddress,
 	}
 
-	if err := s.sendOrder(ctx, restaurant.IntegrationBaseURL, order.ID, integrationReq, &cart.ID); err != nil {
+	if err := s.sendOrder(ctx, restaurant.IntegrationBaseURL, order.ID, integrationReq); err != nil {
 		return nil, err
 	}
 
@@ -347,7 +348,7 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 	}
 	if err := s.sendOrder(ctx, restaurant.IntegrationBaseURL, order.ID, integrations_domain.CreateOrderRequest{
 		ExternalOrderID: externalID, Items: integrationItems, DeliveryAddress: order.DeliveryAddress,
-	}, nil); err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -356,7 +357,7 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 
 // The restaurant must echo our correlation ID, including in early callbacks.
 // Malformed responses are treated as failed attempts rather than accepted orders.
-func (s *OrderService) sendOrder(ctx context.Context, baseURL string, orderID uuid.UUID, req integrations_domain.CreateOrderRequest, cartID *uuid.UUID) error {
+func (s *OrderService) sendOrder(ctx context.Context, baseURL string, orderID uuid.UUID, req integrations_domain.CreateOrderRequest) error {
 	resp, err := s.restaurantClient.CreateOrder(ctx, baseURL, req)
 	status := orders_domain.OrderStatusIntegrationFailed
 	if err == nil && resp != nil && resp.ExternalOrderID == req.ExternalOrderID {
@@ -365,7 +366,7 @@ func (s *OrderService) sendOrder(ctx context.Context, baseURL string, orderID uu
 			status = orders_domain.OrderStatus(resp.Status)
 		}
 	}
-	return s.repo.SaveIntegrationResult(ctx, orderID, req.ExternalOrderID, status, cartID)
+	return s.repo.SaveIntegrationResult(ctx, orderID, req.ExternalOrderID, status)
 }
 
 func (s *OrderService) HandleRestaurantCallback(ctx context.Context, restaurantID uuid.UUID, callback OrderStatusCallback) error {

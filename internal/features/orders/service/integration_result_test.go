@@ -19,7 +19,6 @@ type resultRepository struct {
 	orderrepo.OrderRepository
 	order    *orders.Order
 	result   orders.OrderStatus
-	cartID   *uuid.UUID
 	prepared bool
 }
 
@@ -33,12 +32,11 @@ func (r *resultRepository) CreateWithIdempotencyKey(_ context.Context, o *orders
 func (r *resultRepository) GetByIDAndUserID(context.Context, uuid.UUID, string) (*orders.Order, error) {
 	return r.order, nil
 }
-func (r *resultRepository) SaveIntegrationResult(_ context.Context, _ uuid.UUID, externalID string, status orders.OrderStatus, cartID *uuid.UUID) error {
+func (r *resultRepository) SaveIntegrationResult(_ context.Context, _ uuid.UUID, externalID string, status orders.OrderStatus) error {
 	if r.order.ExternalOrderID == nil || *r.order.ExternalOrderID != externalID {
 		panic("correlation ID was not persisted before sending")
 	}
 	r.result = status
-	r.cartID = cartID
 	r.order.Status = status
 	return nil
 }
@@ -114,7 +112,7 @@ func TestCreateOrderPersistsCorrelationAndUsesRestaurantResult(t *testing.T) {
 			if got.Status != tc.want || repo.result != tc.want {
 				t.Fatalf("status=%s want=%s", got.Status, tc.want)
 			}
-			if repo.cartID == nil || *repo.cartID != c.ID {
+			if repo.order.CheckoutCartID == nil || *repo.order.CheckoutCartID != c.ID {
 				t.Fatal("original cart ID missing from atomic reconciliation")
 			}
 		})

@@ -145,6 +145,17 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 		}
 	}
 
+	// Consume only the original cart when the durable order is created. HTTP
+	// responses and retries never touch carts created for subsequent purchases.
+	if order.CheckoutCartID != nil {
+		tag, err := tx.Exec(ctx, `DELETE FROM carts WHERE id=$1 AND user_id=$2 AND restaurant_id=$3`, *order.CheckoutCartID, order.UserID, order.RestaurantID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() != 1 {
+			return nil, core_errors.ErrConflict
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -351,7 +362,7 @@ func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, o
 
 // SaveIntegrationResult reconciles the HTTP result with callbacks under the same
 // row lock. Only a still-pending order may be changed by the creation response.
-func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus, cartID *uuid.UUID) error {
+func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus) error {
 	if status != domain.OrderStatusPending && status != domain.OrderStatusConfirmed && status != domain.OrderStatusCancelled && status != domain.OrderStatusIntegrationFailed {
 		return core_errors.ErrInvalidArgument
 	}
@@ -374,12 +385,6 @@ func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, ord
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,$2,$3,$4)`, orderID, status, integrationResultSource(status), now); err != nil {
-			return err
-		}
-	}
-	// A callback proves receipt even if the HTTP request timed out afterwards.
-	if cartID != nil && (status != domain.OrderStatusIntegrationFailed || current != domain.OrderStatusPending) {
-		if _, err = tx.Exec(ctx, `DELETE FROM carts WHERE id=$1`, *cartID); err != nil {
 			return err
 		}
 	}

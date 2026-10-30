@@ -300,7 +300,7 @@ See `api/openapi.yaml` for the complete OpenAPI 3.0 specification.
 1. Kitchen API creates the order in `pending`, persisting its correlation `external_order_id` (the order UUID) before any HTTP request.
 2. Kitchen API sends `POST /api/v1/restaurant/orders` to restaurant service
 3. Restaurant stores the order and responds `201 {external_order_id, status}`. It must echo the supplied ID; accepted initial statuses are `pending`, `confirmed`, and `cancelled`.
-4. Kitchen API atomically records the response status and history and clears the original cart. A callback may arrive before the HTTP response; reconciliation never overwrites a status already advanced by a callback.
+4. Kitchen API atomically consumes the original cart when persisting the order, before restaurant dispatch. The response status and history are then recorded atomically. A callback may arrive before the HTTP response; reconciliation never overwrites a status already advanced by a callback.
 5. Restaurant sends status callbacks using the supplied `external_order_id` and unique `event_id`. If the HTTP response already confirmed the order, callbacks may continue with `preparing → ready → delivering → delivered`.
 6. Kitchen validates transitions (`pending → confirmed → ...`, `cancelled` only early); duplicates => `204`, invalid => `409`
 
@@ -583,3 +583,5 @@ Functional requirements are documented in `docs/requirements.md`.
 ### Order item integration IDs
 
 Migration `005_order_item_external_id.sql` stores the partner product ID with each new order item. Checkout and retry use the same frozen ID, name and price even after menu edits. Legacy rows remain NULL because the historical ID cannot safely be inferred from the current menu. Their retry returns HTTP 409 before sending anything; an operator must reconcile every missing ID against the original partner order/catalog before retrying. Do not substitute internal UUIDs or blindly copy current menu IDs. Apply migrations before starting the updated API.
+
+Checkout consumes the original cart in the same transaction as the order, items and initial history. If that transaction fails, the cart remains. A restaurant timeout leaves a durable `integration_failed` order to retry, rather than a second checkout from the same cart. New carts are never deleted by integration responses or retries. Legacy failed orders have no reliable cart association: retries leave their current cart untouched; users can explicitly clear any old duplicate contents. Concurrent retries are serialized by the pending-state transition and reuse the original correlation ID; partner-side deduplication is still required for ambiguous network outcomes.

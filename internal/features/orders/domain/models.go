@@ -20,6 +20,8 @@ const (
 )
 
 type Order struct {
+	// CheckoutCartID is a transient command input, consumed atomically on creation.
+	CheckoutCartID  *uuid.UUID  `json:"-"`
 	ID              uuid.UUID   `json:"id"`
 	UserID          string      `json:"user_id"`
 	RestaurantID    uuid.UUID   `json:"restaurant_id"`

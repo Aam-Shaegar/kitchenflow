@@ -145,7 +145,89 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			t.Fatal("transactional read lost partner ID")
 		}
 	})
-	t.Run("cart follows reconciled result", func(t *testing.T) {
+	t.Run("checkout consumes cart atomically and retries preserve new cart", func(t *testing.T) {
+		seed := newOrder()
+		parent, err := repository.GetByID(ctx, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		user := uuid.NewString()
+		cartID := uuid.New()
+		now := time.Now()
+		if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, user, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		o := &d.Order{ID: uuid.New(), UserID: user, RestaurantID: parent.RestaurantID, CheckoutCartID: &cartID, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+		external := o.ID.String()
+		o.ExternalOrderID = &external
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM carts WHERE id=$1`, cartID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatal("original cart remains")
+		}
+		newCart := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, newCart, user, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		// A duplicate checkout must not consume a subsequent cart.
+		o.CheckoutCartID = &newCart
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveIntegrationResult(ctx, o.ID, external, d.OrderStatusIntegrationFailed); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		results := make(chan error, 12)
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); results <- repository.PrepareIntegrationRetry(ctx, o.ID, external) }()
+		}
+		wg.Wait()
+		close(results)
+		successes := 0
+		for err := range results {
+			if err == nil {
+				successes++
+			} else if !errors.Is(err, coreerrors.ErrConflict) {
+				t.Fatal(err)
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("retry winners=%d", successes)
+		}
+		if err := repository.SaveIntegrationResult(ctx, o.ID, external, d.OrderStatusConfirmed); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM carts WHERE id=$1`, newCart).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatal("new cart lost during retry")
+		}
+		// If the original cart cannot be consumed, no partial order is committed.
+		missing := uuid.New()
+		o.ID = uuid.New()
+		o.IdempotencyKey = uuid.NewString()
+		o.CheckoutCartID = &missing
+		replacementExternal := o.ID.String()
+		o.ExternalOrderID = &replacementExternal
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); !errors.Is(err, coreerrors.ErrConflict) {
+			t.Fatalf("missing cart error: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM orders WHERE id=$1`, o.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatal("partial order committed")
+		}
+	})
+	t.Run("HTTP results never remove current cart", func(t *testing.T) {
 		for _, status := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusCancelled, d.OrderStatusIntegrationFailed} {
 			id := newOrder()
 			order, err := repository.GetByID(ctx, id)
@@ -156,17 +238,14 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, cartID.String(), order.RestaurantID); err != nil {
 				t.Fatal(err)
 			}
-			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, &cartID); err != nil {
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status); err != nil {
 				t.Fatal(err)
 			}
 			var count int
 			if err := pool.QueryRow(ctx, `SELECT count(*) FROM carts WHERE id=$1`, cartID).Scan(&count); err != nil {
 				t.Fatal(err)
 			}
-			want := 0
-			if status == d.OrderStatusIntegrationFailed {
-				want = 1
-			}
+			want := 1
 			if count != want {
 				t.Fatalf("status=%s cart count=%d want=%d", status, count, want)
 			}
@@ -176,11 +255,11 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 	t.Run("HTTP acceptance and rejection", func(t *testing.T) {
 		for _, status := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusCancelled} {
 			id := newOrder()
-			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, nil); err != nil {
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status); err != nil {
 				t.Fatal(err)
 			}
 			assertState(id, status, 1)
-			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status, nil); err != nil {
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), status); err != nil {
 				t.Fatal(err)
 			}
 			assertState(id, status, 1)
@@ -203,7 +282,7 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			if err := apply(id, d.OrderStatusPreparing, uuid.NewString()); err != nil {
 				t.Fatal(err)
 			}
-			if err := repository.SaveIntegrationResult(ctx, id, id.String(), result, nil); err != nil {
+			if err := repository.SaveIntegrationResult(ctx, id, id.String(), result); err != nil {
 				t.Fatal(err)
 			}
 			assertState(id, d.OrderStatusPreparing, 2)
@@ -214,14 +293,14 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		if err := apply(id, d.OrderStatusCancelled, uuid.NewString()); err != nil {
 			t.Fatal(err)
 		}
-		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil); err != nil {
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed); err != nil {
 			t.Fatal(err)
 		}
 		assertState(id, d.OrderStatusCancelled, 1)
 	})
 	t.Run("retry exposes pending correlation before callback", func(t *testing.T) {
 		id := newOrder()
-		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusIntegrationFailed, nil); err != nil {
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusIntegrationFailed); err != nil {
 			t.Fatal(err)
 		}
 		if err := repository.PrepareIntegrationRetry(ctx, id, id.String()); err != nil {
@@ -230,7 +309,7 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		if err := apply(id, d.OrderStatusConfirmed, uuid.NewString()); err != nil {
 			t.Fatal(err)
 		}
-		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil); err != nil {
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed); err != nil {
 			t.Fatal(err)
 		}
 		assertState(id, d.OrderStatusConfirmed, 3)
@@ -239,7 +318,7 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		id := newOrder()
 		errs := make(chan error, 2)
 		go func() { errs <- apply(id, d.OrderStatusConfirmed, uuid.NewString()) }()
-		go func() { errs <- repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed, nil) }()
+		go func() { errs <- repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed) }()
 		for i := 0; i < 2; i++ {
 			if err := <-errs; err != nil {
 				t.Fatal(err)

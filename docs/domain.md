@@ -100,3 +100,5 @@ Restaurant callbacks are also idempotent: repeating the same callback must not m
 Order creation and its local records are committed in a database transaction. External restaurant interaction is synchronous for MVP. If external creation fails, the order remains in a non-final integration state and the API returns a stable representation of that state.
 
 Production evolution: transactional outbox + asynchronous delivery/retry worker.
+
+Checkout consumes the original cart atomically with order creation, before external dispatch. Failed dispatch is recovered by retrying the immutable order. Integration results and retries never delete a current cart. Legacy orders without a known source cart leave existing cart contents untouched.
