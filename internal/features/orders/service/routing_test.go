@@ -55,7 +55,7 @@ func TestCheckoutAndRetryRouteToOrderRestaurant(t *testing.T) {
 	for i, rid := range ids {
 		itemID := uuid.New()
 		repo := &routingRepository{resultRepository: resultRepository{}, expected: expected, index: i}
-		svc := NewOrderService(repo, resultCart{cart: &cart.Cart{ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}}, resultMenu{item: menu.MenuItem{ID: itemID, RestaurantID: rid, IsAvailable: true}}, endpoints, client)
+		svc := NewOrderService(repo, resultCart{cart: &cart.Cart{ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}}, resultMenu{item: menu.MenuItem{ExternalID: "partner-item", ID: itemID, RestaurantID: rid, IsAvailable: true}}, endpoints, client)
 		order, err := svc.CreateOrder(context.Background(), "user", "Test address", "key")
 		if err != nil {
 			t.Fatal(err)
@@ -97,7 +97,7 @@ func TestUnavailableIntegrationDoesNotCreateOrPrepareOrder(t *testing.T) {
 		t.Run(endpoint, func(t *testing.T) {
 			rid, itemID := uuid.New(), uuid.New()
 			repo := &resultRepository{}
-			svc := NewOrderService(repo, resultCart{cart: &cart.Cart{ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}}, resultMenu{item: menu.MenuItem{ID: itemID, RestaurantID: rid, IsAvailable: true}}, routingRestaurants{rid: endpoint}, client)
+			svc := NewOrderService(repo, resultCart{cart: &cart.Cart{ID: uuid.New(), RestaurantID: rid, Items: []cart.CartItem{{MenuItemID: itemID, Quantity: 1}}}}, resultMenu{item: menu.MenuItem{ExternalID: "partner-item", ID: itemID, RestaurantID: rid, IsAvailable: true}}, routingRestaurants{rid: endpoint}, client)
 			if _, err := svc.CreateOrder(context.Background(), "user", "Test address", "key"); !errors.Is(err, coreerrors.ErrIntegrationUnavailable) {
 				t.Fatalf("checkout error: %v", err)
 			}

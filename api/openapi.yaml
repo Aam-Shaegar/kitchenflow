@@ -609,6 +609,7 @@ components:
       type: object
       required: [menu_item_id, name, unit_price, quantity, total_price]
       properties:
+        external_menu_item_id: { type: string, description: "Immutable partner product ID; omitted for legacy orders. Retry requires all IDs to be reconciled." }
         menu_item_id: { type: string, format: uuid }
         name: { type: string }
         unit_price: { type: integer, description: "Snapshot in kopecks" }

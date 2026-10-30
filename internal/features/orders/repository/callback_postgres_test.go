@@ -59,6 +59,13 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 	if _, err = pool.Exec(ctx, string(migration)); err != nil {
 		t.Fatal(err)
 	}
+	snapshotMigration, err := os.ReadFile("../../../../migrations/005_order_item_external_id.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(snapshotMigration)); err != nil {
+		t.Fatal(err)
+	}
 	repository := repo.NewOrderRepository(pool)
 	newOrder := func() uuid.UUID {
 		t.Helper()
@@ -84,6 +91,60 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			t.Fatalf("status/history: %s/%d, want %s/%d", order.Status, len(order.StatusHistory), status, count)
 		}
 	}
+	t.Run("partner item snapshot persists across menu edits", func(t *testing.T) {
+		id := newOrder()
+		original, err := repository.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		categoryID, itemID := uuid.New(), uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_categories(id,restaurant_id,name) VALUES($1,$2,'Category')`, categoryID, original.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_items(id,restaurant_id,category_id,external_id,name,price) VALUES($1,$2,$3,'partner-original','Original',123)`, itemID, original.RestaurantID, categoryID); err != nil {
+			t.Fatal(err)
+		}
+		// An old row predates the migration and has no reconstructible partner ID.
+		legacyID := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO order_items(id,order_id,menu_item_id,name,unit_price,quantity,total_price) VALUES($1,$2,$3,'Original',123,1,123)`, legacyID, id, itemID); err != nil {
+			t.Fatal(err)
+		}
+		// Reapplying the additive migration never guesses historical IDs.
+		if _, err := pool.Exec(ctx, string(snapshotMigration)); err != nil {
+			t.Fatal(err)
+		}
+		legacy, err := repository.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if legacy.Items[0].ExternalMenuItemID != "" {
+			t.Fatal("legacy ID was guessed")
+		}
+		now := time.Now()
+		o := &d.Order{ID: uuid.New(), UserID: "snapshot-user", RestaurantID: original.RestaurantID, Status: d.OrderStatusIntegrationFailed, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+		o.Items = []d.OrderItem{{ID: uuid.New(), OrderID: o.ID, MenuItemID: itemID, ExternalMenuItemID: "partner-original", Name: "Original", UnitPrice: 123, Quantity: 1, TotalPrice: 123, CreatedAt: now}}
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE menu_items SET external_id='partner-changed',name='Changed',price=999 WHERE id=$1`, itemID); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := repository.GetByID(ctx, o.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(loaded.Items) != 1 || loaded.Items[0].ExternalMenuItemID != "partner-original" || loaded.Items[0].UnitPrice != 123 {
+			t.Fatalf("snapshot changed: %+v", loaded.Items)
+		}
+		// Duplicate creation reads items through the transactional query path.
+		duplicate, err := repository.CreateWithIdempotencyKey(ctx, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
+			t.Fatal("transactional read lost partner ID")
+		}
+	})
 	t.Run("cart follows reconciled result", func(t *testing.T) {
 		for _, status := range []d.OrderStatus{d.OrderStatusConfirmed, d.OrderStatusCancelled, d.OrderStatusIntegrationFailed} {
 			id := newOrder()

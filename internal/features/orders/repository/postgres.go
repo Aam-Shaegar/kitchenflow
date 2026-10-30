@@ -171,7 +171,7 @@ func (r *PostgresOrderRepository) getByUserIDAndIdempotencyKeyTx(ctx context.Con
 // loadOrderDetailsTx attaches items and history while still inside the tx.
 func (r *PostgresOrderRepository) loadOrderDetailsTx(ctx context.Context, tx core_database.Tx, order *domain.Order) (*domain.Order, error) {
 	itemsQuery := `
-		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at
+		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at, COALESCE(external_menu_item_id, '')
 		FROM order_items
 		WHERE order_id = $1
 	`
@@ -183,7 +183,7 @@ func (r *PostgresOrderRepository) loadOrderDetailsTx(ctx context.Context, tx cor
 
 	for rows.Next() {
 		var item domain.OrderItem
-		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt, &item.ExternalMenuItemID); err != nil {
 			return nil, err
 		}
 		order.Items = append(order.Items, item)
@@ -395,12 +395,12 @@ func integrationResultSource(status domain.OrderStatus) string {
 
 func (r *PostgresOrderRepository) createOrderItemTx(ctx context.Context, tx core_database.Tx, item *domain.OrderItem) error {
 	query := `
-		INSERT INTO order_items (id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO order_items (id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at, external_menu_item_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 	_, err := tx.Exec(ctx, query,
 		item.ID, item.OrderID, item.MenuItemID, item.Name,
-		item.UnitPrice, item.Quantity, item.TotalPrice, item.CreatedAt,
+		item.UnitPrice, item.Quantity, item.TotalPrice, item.CreatedAt, item.ExternalMenuItemID,
 	)
 	return err
 }
@@ -562,7 +562,7 @@ func (r *PostgresOrderRepository) scanOrder(row core_database.Row) (*domain.Orde
 
 func (r *PostgresOrderRepository) loadOrderDetails(ctx context.Context, order *domain.Order) (*domain.Order, error) {
 	itemsQuery := `
-		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at
+		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at, COALESCE(external_menu_item_id, '')
 		FROM order_items
 		WHERE order_id = $1
 	`
@@ -574,7 +574,7 @@ func (r *PostgresOrderRepository) loadOrderDetails(ctx context.Context, order *d
 
 	for rows.Next() {
 		var item domain.OrderItem
-		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt, &item.ExternalMenuItemID); err != nil {
 			return nil, err
 		}
 		order.Items = append(order.Items, item)

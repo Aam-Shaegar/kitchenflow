@@ -65,7 +65,7 @@ Canonical order in Kitchen. Stores an internal ID and a correlation external ord
 
 ### OrderItem
 
-Stores immutable snapshot of product name and unit price at order creation, plus quantity and line total.
+Stores immutable snapshot of partner product ID (`external_menu_item_id`), product name and unit price at order creation, plus quantity and line total.
 
 ### OrderStatusHistory
 

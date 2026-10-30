@@ -106,7 +106,7 @@ func TestCreateOrderPersistsCorrelationAndUsesRestaurantResult(t *testing.T) {
 				}
 				return &integration.CreateOrderResponse{ExternalOrderID: id, Status: tc.status}, nil
 			})
-			svc := NewOrderService(repo, resultCart{cart: c}, resultMenu{item: menu.MenuItem{ID: itemID, RestaurantID: rid, IsAvailable: true, Price: 100}}, resultRestaurant{restaurant: restaurants.RestaurantInfo{ID: rid, IsOpen: true}}, client)
+			svc := NewOrderService(repo, resultCart{cart: c}, resultMenu{item: menu.MenuItem{ExternalID: "partner-item", ID: itemID, RestaurantID: rid, IsAvailable: true, Price: 100}}, resultRestaurant{restaurant: restaurants.RestaurantInfo{ID: rid, IsOpen: true}}, client)
 			got, err := svc.CreateOrder(context.Background(), "user", "Test address", "key")
 			if err != nil {
 				t.Fatal(err)

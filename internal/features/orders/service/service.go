@@ -102,6 +102,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		if !ok {
 			return nil, errors.ErrNotFound
 		}
+		if strings.TrimSpace(menuItem.ExternalID) == "" {
+			return nil, errors.ErrConflict
+		}
 		if !menuItem.IsAvailable {
 			return nil, errors.ErrConflict
 		}
@@ -143,14 +146,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		totalAmount += lineTotal
 
 		orderItems[i] = orders_domain.OrderItem{
-			ID:         uuid.New(),
-			OrderID:    orderID,
-			MenuItemID: cartItem.MenuItemID,
-			Name:       menuItem.Name,
-			UnitPrice:  menuItem.Price,
-			Quantity:   cartItem.Quantity,
-			TotalPrice: lineTotal,
-			CreatedAt:  now,
+			ExternalMenuItemID: menuItem.ExternalID,
+			ID:                 uuid.New(),
+			OrderID:            orderID,
+			MenuItemID:         cartItem.MenuItemID,
+			Name:               menuItem.Name,
+			UnitPrice:          menuItem.Price,
+			Quantity:           cartItem.Quantity,
+			TotalPrice:         lineTotal,
+			CreatedAt:          now,
 		}
 
 		integrationItems[i] = integrations_domain.CreateOrderItem{
@@ -324,8 +328,11 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 
 	integrationItems := make([]integrations_domain.CreateOrderItem, len(order.Items))
 	for i, item := range order.Items {
+		if strings.TrimSpace(item.ExternalMenuItemID) == "" {
+			return nil, errors.ErrConflict
+		}
 		integrationItems[i] = integrations_domain.CreateOrderItem{
-			ExternalMenuItemID: item.MenuItemID.String(),
+			ExternalMenuItemID: item.ExternalMenuItemID,
 			Name:               item.Name,
 			UnitPrice:          item.UnitPrice,
 			Quantity:           item.Quantity,

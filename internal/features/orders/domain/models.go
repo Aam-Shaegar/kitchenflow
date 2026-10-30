@@ -36,10 +36,11 @@ type Order struct {
 }
 
 type OrderItem struct {
-	ID         uuid.UUID `json:"id"`
-	OrderID    uuid.UUID `json:"order_id"`
-	MenuItemID uuid.UUID `json:"menu_item_id"`
-	Name       string    `json:"name"`
+	ExternalMenuItemID string    `json:"external_menu_item_id,omitempty"`
+	ID                 uuid.UUID `json:"id"`
+	OrderID            uuid.UUID `json:"order_id"`
+	MenuItemID         uuid.UUID `json:"menu_item_id"`
+	Name               string    `json:"name"`
 	// UnitPrice is a frozen snapshot in minor units (kopecks); history must survive menu edits.
 	UnitPrice int64 `json:"unit_price"`
 	Quantity  int   `json:"quantity"`

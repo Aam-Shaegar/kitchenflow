@@ -579,3 +579,7 @@ The implementation plan used during development is available in `docs/ai-plan.md
 
 KitchenFlow is a food delivery backend carried over from an earlier project under a neutral name.
 Functional requirements are documented in `docs/requirements.md`.
+
+### Order item integration IDs
+
+Migration `005_order_item_external_id.sql` stores the partner product ID with each new order item. Checkout and retry use the same frozen ID, name and price even after menu edits. Legacy rows remain NULL because the historical ID cannot safely be inferred from the current menu. Their retry returns HTTP 409 before sending anything; an operator must reconcile every missing ID against the original partner order/catalog before retrying. Do not substitute internal UUIDs or blindly copy current menu IDs. Apply migrations before starting the updated API.
