@@ -70,7 +70,9 @@ func (r resultRestaurant) GetByIDForOrder(context.Context, uuid.UUID) (*restaura
 
 type resultClient func(context.Context, integration.CreateOrderRequest) (*integration.CreateOrderResponse, error)
 
-func (c resultClient) CreateOrder(ctx context.Context, q integration.CreateOrderRequest) (*integration.CreateOrderResponse, error) {
+func (c resultClient) ValidateEndpoint(string) error { return nil }
+
+func (c resultClient) CreateOrder(ctx context.Context, _ string, q integration.CreateOrderRequest) (*integration.CreateOrderResponse, error) {
 	return c(ctx, q)
 }
 
@@ -126,7 +128,7 @@ func TestRetryPreparesCorrelationBeforeRestaurantCall(t *testing.T) {
 		}
 		return &integration.CreateOrderResponse{ExternalOrderID: q.ExternalOrderID, Status: "cancelled"}, nil
 	})
-	svc := NewOrderService(repo, nil, nil, nil, client)
+	svc := NewOrderService(repo, nil, nil, resultRestaurant{}, client)
 	got, err := svc.RetryIntegration(context.Background(), repo.order.ID, "user")
 	if err != nil {
 		t.Fatal(err)

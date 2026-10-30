@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -87,10 +88,13 @@ func main() {
 	menuSvc := menu_service.NewMenuService(menuRepo)
 	cartSvc := cart_service.NewCartService(cartRepo, menuSvc)
 
-	restaurantClient := integrations_http.NewHTTPClient(
-		os.Getenv("RESTAURANT_MOCK_URL"),
-		10*time.Second,
+	restaurantClient, err := integrations_http.NewHTTPClient(10*time.Second,
+		strings.FieldsFunc(os.Getenv("RESTAURANT_ALLOWED_ORIGINS"), func(r rune) bool { return r == ',' }),
+		strings.FieldsFunc(os.Getenv("RESTAURANT_ALLOWED_PRIVATE_CIDRS"), func(r rune) bool { return r == ',' }),
 	)
+	if err != nil {
+		logger.Fatal("invalid restaurant integration configuration", zap.Error(err))
+	}
 
 	ordersSvc := orders_service.NewOrderService(
 		ordersRepo,

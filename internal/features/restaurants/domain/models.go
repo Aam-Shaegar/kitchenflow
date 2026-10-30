@@ -18,11 +18,12 @@ type Restaurant struct {
 }
 
 type RestaurantInfo struct {
-	ID          uuid.UUID `json:"id"`
-	ExternalID  string    `json:"external_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	IsOpen      bool      `json:"is_open"`
+	IntegrationBaseURL string    `json:"-"`
+	ID                 uuid.UUID `json:"id"`
+	ExternalID         string    `json:"external_id"`
+	Name               string    `json:"name"`
+	Description        string    `json:"description"`
+	IsOpen             bool      `json:"is_open"`
 }
 
 type RestaurantListItem struct {

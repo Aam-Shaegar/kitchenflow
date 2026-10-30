@@ -301,7 +301,7 @@ restaurantClient)` — это ручная подстановка зависим
 
 **`restaurants/` — витрина и портал партнеров.**
 - `domain/models.go` — `Restaurant` (полная карточка), `RestaurantInfo`
-  (узкий вид для заказов — заказу не нужен `integration_base_url`),
+  (вид для заказов, включая `integration_base_url` для отправки выбранному ресторану; URL исключён из JSON),
   `RestaurantListItem` (узкий вид для списка). Три вида вместо одного —
   это не бюрократия, а защита: лишние поля не утекают наружу и не тащатся в запросы.
 - `repository/` — `GetByID`, `List/ListOpen/ListPaginated`, `Create`, `Update`.

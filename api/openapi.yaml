@@ -321,6 +321,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Restaurant integration is missing or not approved by the operator }
         '400': { $ref: '#/components/responses/ValidationError' }
     get:
       tags: [Orders]
@@ -418,6 +419,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: Restaurant integration is missing or not approved by the operator }
 
   /api/v1/integrations/restaurants/{restaurant_id}/orders/status:
     post:
@@ -503,7 +505,7 @@ components:
         name: { type: string, maxLength: 200 }
         description: { type: string, maxLength: 2000 }
         external_id: { type: string, maxLength: 128 }
-        integration_base_url: { type: string, maxLength: 512 }
+        integration_base_url: { type: string, maxLength: 512, description: "HTTP(S) base URL; dispatch requires operator-approved origin and network. Empty disables integration (checkout/retry returns 503)." }
 
     UpdateRestaurantRequest:
       type: object
@@ -511,7 +513,7 @@ components:
         name: { type: string, maxLength: 200 }
         description: { type: string, maxLength: 2000 }
         is_open: { type: boolean }
-        integration_base_url: { type: string, maxLength: 512 }
+        integration_base_url: { type: string, maxLength: 512, description: "HTTP(S) base URL; dispatch requires operator-approved origin and network. Empty disables integration (checkout/retry returns 503)." }
 
     MenuItem:
       type: object

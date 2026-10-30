@@ -7,7 +7,8 @@ import (
 // RestaurantClient implementations must echo the request ExternalOrderID in
 // responses and callbacks. Creation responses use pending, confirmed or cancelled.
 type RestaurantClient interface {
-	CreateOrder(ctx context.Context, req CreateOrderRequest) (*CreateOrderResponse, error)
+	ValidateEndpoint(baseURL string) error
+	CreateOrder(ctx context.Context, baseURL string, req CreateOrderRequest) (*CreateOrderResponse, error)
 }
 
 type CreateOrderRequest struct {

@@ -362,7 +362,8 @@ This starts:
 | `TIME_ZONE` | `UTC` | Application timezone |
 | `LOGGER_FOLDER` | `/app/logs` | Log file directory |
 | `LOGGER_LEVEL` | `INFO` | Log level |
-| `RESTAURANT_MOCK_URL` | `http://restaurant-mock:8081` | Restaurant service URL |
+| `RESTAURANT_ALLOWED_ORIGINS` | empty (dispatch disabled) | Comma-separated trusted restaurant origins, including scheme and port |
+| `RESTAURANT_ALLOWED_PRIVATE_CIDRS` | empty | Explicit private/loopback networks allowed for those origins; Compose demo uses `172.16.0.0/12` |
 | `MIGRATIONS_DIR` | `/app/migrations` | Versioned migrations dir (auto-run) |
 
 #### Restaurant Mock
@@ -374,6 +375,10 @@ This starts:
 | `RESTAURANT_ID` | `550e8400-...` | Demo restaurant UUID |
 | `MOCK_MODE` | `auto` | `auto/manual/rejecting/failing` |
 | `MOCK_DELAYS` | `2s,2s,2s,2s,2s` | Auto-progression delays |
+
+Orders and retries use the selected restaurant’s `integration_base_url`. There is no global URL override. Missing, malformed or unapproved URLs return HTTP 503 before creating an order or preparing a retry. Network/DNS failures during dispatch produce `integration_failed`.
+
+The operator must approve each origin in `RESTAURANT_ALLOWED_ORIGINS`; restaurant API writes cannot extend that list. Use HTTPS for external integrations. Credentials, queries and fragments in base URLs are rejected. Redirects and environment proxies are disabled. DNS results are checked and the validated IP is dialed directly; private/loopback addresses additionally require explicit CIDRs. Link-local (including metadata services), multicast and unspecified addresses are always blocked. Keep private CIDRs narrow; adjust the Compose CIDR if your Docker network uses a different subnet.
 
 ### Local Development (without Docker)
 
@@ -393,7 +398,8 @@ psql -h localhost -U postgres -d kitchen -f migrations/001_init.sql
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/kitchen?sslmode=disable"
 export DB_TIMEOUT=10s
 export SERVER_ADDR=:8080
-export RESTAURANT_MOCK_URL=http://localhost:8081
+export RESTAURANT_ALLOWED_ORIGINS=http://localhost:8081
+export RESTAURANT_ALLOWED_PRIVATE_CIDRS=127.0.0.0/8,::1/128
 export LOGGER_FOLDER=./logs
 
 # Run Kitchen API
@@ -403,6 +409,12 @@ go run ./cmd/kitchen-api
 export PORT=8081
 export KITCHEN_CALLBACK_URL=http://localhost:8080
 go run ./cmd/restaurant-mock
+```
+
+After the API has started and seeded the demo restaurant, update its integration URL for local execution (separate terminal):
+
+```bash
+psql "$DATABASE_URL" -c "UPDATE restaurants SET integration_base_url='http://localhost:8081' WHERE id='550e8400-e29b-41d4-a716-446655440000';"
 ```
 
 ## Testing

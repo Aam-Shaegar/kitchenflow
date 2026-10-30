@@ -124,6 +124,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		return nil, errors.ErrConflict
 	}
 
+	if err := s.restaurantClient.ValidateEndpoint(restaurant.IntegrationBaseURL); err != nil {
+		return nil, err
+	}
+
 	// One timestamp for the whole order keeps created_at/updated_at/items/history
 	// consistent instead of drifting by milliseconds between time.Now() calls.
 	now := time.Now()
@@ -199,7 +203,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 		DeliveryAddress: deliveryAddress,
 	}
 
-	if err := s.sendOrder(ctx, order.ID, integrationReq, &cart.ID); err != nil {
+	if err := s.sendOrder(ctx, restaurant.IntegrationBaseURL, order.ID, integrationReq, &cart.ID); err != nil {
 		return nil, err
 	}
 
@@ -307,6 +311,17 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 		return nil, errors.ErrConflict
 	}
 
+	restaurant, err := s.restaurantProvider.GetByIDForOrder(ctx, order.RestaurantID)
+	if err != nil {
+		return nil, err
+	}
+	if restaurant == nil {
+		return nil, errors.ErrNotFound
+	}
+	if err := s.restaurantClient.ValidateEndpoint(restaurant.IntegrationBaseURL); err != nil {
+		return nil, err
+	}
+
 	integrationItems := make([]integrations_domain.CreateOrderItem, len(order.Items))
 	for i, item := range order.Items {
 		integrationItems[i] = integrations_domain.CreateOrderItem{
@@ -323,7 +338,7 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 	if err := s.repo.PrepareIntegrationRetry(ctx, order.ID, externalID); err != nil {
 		return nil, err
 	}
-	if err := s.sendOrder(ctx, order.ID, integrations_domain.CreateOrderRequest{
+	if err := s.sendOrder(ctx, restaurant.IntegrationBaseURL, order.ID, integrations_domain.CreateOrderRequest{
 		ExternalOrderID: externalID, Items: integrationItems, DeliveryAddress: order.DeliveryAddress,
 	}, nil); err != nil {
 		return nil, err
@@ -334,8 +349,8 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 
 // The restaurant must echo our correlation ID, including in early callbacks.
 // Malformed responses are treated as failed attempts rather than accepted orders.
-func (s *OrderService) sendOrder(ctx context.Context, orderID uuid.UUID, req integrations_domain.CreateOrderRequest, cartID *uuid.UUID) error {
-	resp, err := s.restaurantClient.CreateOrder(ctx, req)
+func (s *OrderService) sendOrder(ctx context.Context, baseURL string, orderID uuid.UUID, req integrations_domain.CreateOrderRequest, cartID *uuid.UUID) error {
+	resp, err := s.restaurantClient.CreateOrder(ctx, baseURL, req)
 	status := orders_domain.OrderStatusIntegrationFailed
 	if err == nil && resp != nil && resp.ExternalOrderID == req.ExternalOrderID {
 		switch orders_domain.OrderStatus(resp.Status) {

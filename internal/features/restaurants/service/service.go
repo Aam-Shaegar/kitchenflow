@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/domain"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/repository"
+	"github.com/google/uuid"
 )
 
 type RestaurantService struct {
@@ -43,11 +43,12 @@ func (s *RestaurantService) GetInfoByID(ctx context.Context, id uuid.UUID) (*dom
 		return nil, errors.ErrNotFound
 	}
 	return &domain.RestaurantInfo{
-		ID:          rest.ID,
-		ExternalID:  rest.ExternalID,
-		Name:        rest.Name,
-		Description: rest.Description,
-		IsOpen:      rest.IsOpen,
+		IntegrationBaseURL: rest.IntegrationBaseURL,
+		ID:                 rest.ID,
+		ExternalID:         rest.ExternalID,
+		Name:               rest.Name,
+		Description:        rest.Description,
+		IsOpen:             rest.IsOpen,
 	}, nil
 }
 

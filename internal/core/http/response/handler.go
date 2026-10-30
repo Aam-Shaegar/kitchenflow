@@ -36,6 +36,10 @@ func (h *HTTPResponseHandler) ErrorResponse(err error, msg string) {
 	)
 
 	switch {
+	case errors.Is(err, core_error.ErrIntegrationUnavailable):
+		statusCode = http.StatusServiceUnavailable
+		msg = "restaurant integration unavailable"
+		logFunc = h.log.Warn
 	case errors.Is(err, core_error.ErrInvalidArgument):
 		statusCode = http.StatusBadRequest
 		logFunc = h.log.Warn
