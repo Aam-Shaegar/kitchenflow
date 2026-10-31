@@ -56,3 +56,28 @@ func TestCancelRepeatAndAutoProcessingStops(t *testing.T) {
 		t.Fatal(o.Status)
 	}
 }
+
+func TestCreateReplayDoesNotRestartOrder(t *testing.T) {
+	store := NewMockStore()
+	handler := handleOrders(store, "", "", MockConfig{Mode: "manual"})
+	payload := `{"external_order_id":"replay","delivery_address":"Test address","items":[]}`
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest("POST", "/api/v1/restaurant/orders", strings.NewReader(payload)))
+		if w.Code != 200 && w.Code != 201 {
+			t.Fatal(w.Code)
+		}
+		if i == 0 {
+			store.SetStatus("replay", "preparing")
+		}
+	}
+	o, _ := store.Get("replay")
+	if o.Status != "preparing" {
+		t.Fatal("replay restarted cooking")
+	}
+	w := httptest.NewRecorder()
+	handler(w, httptest.NewRequest("POST", "/api/v1/restaurant/orders", strings.NewReader(strings.Replace(payload, "Test address", "Other address", 1))))
+	if w.Code != 409 {
+		t.Fatal("mismatched payload accepted")
+	}
+}

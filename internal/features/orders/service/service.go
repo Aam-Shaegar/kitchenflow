@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -167,6 +168,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID, deliveryAddress,
 	}
 
 	order := &orders_domain.Order{
+		DispatchBaseURL:      restaurant.IntegrationBaseURL,
 		CheckoutCartID:       &cart.ID,
 		CheckoutCartRevision: cart.Revision,
 		ID:                   orderID,
@@ -386,11 +388,12 @@ func (s *OrderService) RetryIntegration(ctx context.Context, id uuid.UUID, userI
 // The restaurant must echo our correlation ID, including in early callbacks.
 // Malformed responses are treated as failed attempts rather than accepted orders.
 func (s *OrderService) sendOrder(ctx context.Context, baseURL string, orderID uuid.UUID, req integrations_domain.CreateOrderRequest) error {
+	sort.Slice(req.Items, func(i, j int) bool { return req.Items[i].ExternalMenuItemID < req.Items[j].ExternalMenuItemID })
 	resp, err := s.restaurantClient.CreateOrder(ctx, baseURL, req)
 	status := orders_domain.OrderStatusIntegrationFailed
 	if err == nil && resp != nil && resp.ExternalOrderID == req.ExternalOrderID {
 		switch orders_domain.OrderStatus(resp.Status) {
-		case orders_domain.OrderStatusPending, orders_domain.OrderStatusConfirmed, orders_domain.OrderStatusCancelled:
+		case orders_domain.OrderStatusPending, orders_domain.OrderStatusConfirmed, orders_domain.OrderStatusCancelled, orders_domain.OrderStatusPreparing, orders_domain.OrderStatusReady, orders_domain.OrderStatusDelivering, orders_domain.OrderStatusDelivered:
 			status = orders_domain.OrderStatus(resp.Status)
 		}
 	}

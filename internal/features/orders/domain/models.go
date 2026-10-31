@@ -20,6 +20,7 @@ const (
 )
 
 type Order struct {
+	DispatchBaseURL string `json:"-"`
 	// CheckoutCartID is a transient command input, consumed atomically on creation.
 	CheckoutCartRevision int64       `json:"-"`
 	CheckoutCartID       *uuid.UUID  `json:"-"`

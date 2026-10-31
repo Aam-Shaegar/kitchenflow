@@ -87,7 +87,7 @@ func TestCreateOrderPersistsCorrelationAndUsesRestaurantResult(t *testing.T) {
 		{name: "manual acceptance", status: "confirmed", want: orders.OrderStatusConfirmed},
 		{name: "rejection", status: "cancelled", want: orders.OrderStatusCancelled},
 		{name: "pending", status: "pending", want: orders.OrderStatusPending},
-		{name: "invalid status", status: "delivered", want: orders.OrderStatusIntegrationFailed},
+		{name: "invalid status", status: "unknown", want: orders.OrderStatusIntegrationFailed},
 		{name: "wrong correlation", status: "confirmed", badID: true, want: orders.OrderStatusIntegrationFailed},
 		{name: "timeout", fail: true, want: orders.OrderStatusIntegrationFailed},
 	} {

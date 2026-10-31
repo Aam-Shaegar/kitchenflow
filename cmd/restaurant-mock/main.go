@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,8 +54,9 @@ type StoredOrder struct {
 }
 
 type MockStore struct {
-	mu     sync.RWMutex
-	orders map[string]*StoredOrder
+	createMu sync.Mutex
+	mu       sync.RWMutex
+	orders   map[string]*StoredOrder
 }
 
 func NewMockStore() *MockStore {
@@ -71,7 +73,12 @@ func (s *MockStore) Get(id string) (*StoredOrder, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	o, ok := s.orders[id]
-	return o, ok
+	if !ok {
+		return nil, false
+	}
+	copy := *o
+	copy.Items = append([]CreateOrderItem(nil), o.Items...)
+	return &copy, true
 }
 
 func (s *MockStore) List() []*StoredOrder {
@@ -258,6 +265,17 @@ func handleCreateOrder(store *MockStore, callbackURL, restaurantID string, cfg M
 			return
 		}
 
+		store.createMu.Lock()
+		defer store.createMu.Unlock()
+		if previous, ok := store.Get(req.ExternalOrderID); ok {
+			if previous.DeliveryAddress != req.DeliveryAddress || !slices.Equal(previous.Items, req.Items) {
+				http.Error(w, "order ID payload conflict", 409)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(CreateOrderResponse{ExternalOrderID: previous.ExternalOrderID, Status: previous.Status})
+			return
+		}
 		// Failing mode lets us rehearse outages: every create attempt gets a 503.
 		if cfg.Mode == "failing" {
 			http.Error(w, "restaurant temporarily unavailable", http.StatusServiceUnavailable)

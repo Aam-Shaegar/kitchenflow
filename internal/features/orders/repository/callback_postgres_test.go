@@ -2,7 +2,12 @@ package repository_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	integrationhttp "github.com/Aam-Shaegar/kitchenflow/internal/features/integrations/restaurant/http"
+	ordersservice "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/service"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"sync"
@@ -73,6 +78,13 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, string(revisionMigration)); err != nil {
+		t.Fatal(err)
+	}
+	dispatchMigration, err := os.ReadFile("../../../../migrations/007_order_dispatch.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(dispatchMigration)); err != nil {
 		t.Fatal(err)
 	}
 	repository := repo.NewOrderRepository(pool)
@@ -152,6 +164,87 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		}
 		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
 			t.Fatal("transactional read lost partner ID")
+		}
+	})
+	t.Run("worker recovers persisted order after process loss", func(t *testing.T) {
+		id := newOrder()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var q struct {
+				ExternalOrderID string `json:"external_order_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+				t.Error(err)
+			}
+			if q.ExternalOrderID != id.String() {
+				t.Error("changed correlation")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"external_order_id": q.ExternalOrderID, "status": "confirmed"})
+		}))
+		defer server.Close()
+		if _, err := pool.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url) VALUES($1,$2)`, id, server.URL); err != nil {
+			t.Fatal(err)
+		}
+		client, err := integrationhttp.NewHTTPClient(time.Second, []string{server.URL}, []string{"127.0.0.0/8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker := ordersservice.NewOrderService(repository, nil, nil, nil, client)
+		if err := worker.RecoverDispatch(ctx, repository); err != nil {
+			t.Fatal(err)
+		}
+		assertState(id, d.OrderStatusConfirmed, 1)
+		claimed, _, _, err := repository.ClaimDispatch(ctx)
+		if err != nil || claimed != uuid.Nil {
+			t.Fatal("acknowledged work remained")
+		}
+	})
+	t.Run("dispatch survives lease loss and late confirmation", func(t *testing.T) {
+		id := newOrder()
+		if _, err := pool.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url) VALUES($1,'http://partner')`, id); err != nil {
+			t.Fatal(err)
+		}
+		claimed, token, _, err := repository.ClaimDispatch(ctx)
+		if err != nil || claimed != id {
+			t.Fatalf("claim %s %v", claimed, err)
+		}
+		second, _, _, err := repository.ClaimDispatch(ctx)
+		if err != nil || second != uuid.Nil {
+			t.Fatal("job concurrently claimed")
+		}
+		// Simulate process crash: no release; another worker recovers expired lease.
+		if _, err := pool.Exec(ctx, `UPDATE order_dispatch SET lease_until=now()-interval '1 second' WHERE order_id=$1`, id); err != nil {
+			t.Fatal(err)
+		}
+		recovered, newToken, _, err := repository.ClaimDispatch(ctx)
+		if err != nil || recovered != id || newToken == token {
+			t.Fatal("expired lease not recovered")
+		}
+		if err := repository.ReleaseDispatch(ctx, id, token); err != nil {
+			t.Fatal(err)
+		}
+		var saved uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT lease_token FROM order_dispatch WHERE order_id=$1`, id).Scan(&saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved != newToken {
+			t.Fatal("old worker overwrote new lease")
+		}
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusIntegrationFailed); err != nil {
+			t.Fatal(err)
+		}
+		if err := apply(id, d.OrderStatusConfirmed, "late-recovery-event"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed); err != nil {
+			t.Fatal(err)
+		}
+		assertState(id, d.OrderStatusConfirmed, 2)
+		var jobs int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM order_dispatch WHERE order_id=$1`, id).Scan(&jobs); err != nil {
+			t.Fatal(err)
+		}
+		if jobs != 0 {
+			t.Fatal("acknowledged job remains")
 		}
 	})
 	t.Run("history failure rolls back status and deduplication", func(t *testing.T) {

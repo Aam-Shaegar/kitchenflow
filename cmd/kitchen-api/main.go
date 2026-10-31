@@ -104,6 +104,23 @@ func main() {
 		restaurantClient,
 	)
 
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := ordersSvc.RecoverDispatch(ctx, ordersRepo); err != nil {
+					logger.Error("order dispatch recovery failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	defer func() { cancel(); <-workerDone }()
 	restaurantsHandler := restaurants_handler.NewRestaurantHandler(restaurantsSvc)
 	menuHandler := menu_handler.NewMenuHandler(menuSvc)
 	cartHandler := cart_handler.NewCartHandler(cartSvc)

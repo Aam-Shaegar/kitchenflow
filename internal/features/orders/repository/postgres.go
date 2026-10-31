@@ -132,6 +132,11 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 		return existing, nil
 	}
 
+	if order.DispatchBaseURL != "" {
+		if _, err := tx.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url,available_at) VALUES($1,$2,now()+interval '30 seconds')`, order.ID, order.DispatchBaseURL); err != nil {
+			return nil, err
+		}
+	}
 	// The order row exists, now persist its items and the initial history atomically.
 	for _, item := range order.Items {
 		if err := r.createOrderItemTx(ctx, tx, &item); err != nil {
@@ -337,6 +342,9 @@ func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, o
 	if current != domain.OrderStatusIntegrationFailed {
 		return core_errors.ErrConflict
 	}
+	if _, err := tx.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url,available_at) SELECT o.id,r.integration_base_url,now()+interval '30 seconds' FROM orders o JOIN restaurants r ON r.id=o.restaurant_id WHERE o.id=$1 ON CONFLICT(order_id) DO UPDATE SET available_at=EXCLUDED.available_at`, orderID); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	if _, err = tx.Exec(ctx, `UPDATE orders SET external_order_id=$2,status='pending',updated_at=$3 WHERE id=$1`, orderID, externalID, now); err != nil {
 		return err
@@ -350,7 +358,7 @@ func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, o
 // SaveIntegrationResult reconciles the HTTP result with callbacks under the same
 // row lock. Only a still-pending order may be changed by the creation response.
 func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus) error {
-	if status != domain.OrderStatusPending && status != domain.OrderStatusConfirmed && status != domain.OrderStatusCancelled && status != domain.OrderStatusIntegrationFailed {
+	if status != domain.OrderStatusPending && status != domain.OrderStatusConfirmed && status != domain.OrderStatusCancelled && status != domain.OrderStatusIntegrationFailed && status != domain.OrderStatusPreparing && status != domain.OrderStatusReady && status != domain.OrderStatusDelivering && status != domain.OrderStatusDelivered {
 		return core_errors.ErrInvalidArgument
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -366,12 +374,17 @@ func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, ord
 	if savedExternalID == nil || *savedExternalID != externalID {
 		return core_errors.ErrConflict
 	}
-	if current == domain.OrderStatusPending && status != current {
+	if (current == domain.OrderStatusPending || current == domain.OrderStatusIntegrationFailed) && status != current {
 		now := time.Now().UTC()
 		if _, err = tx.Exec(ctx, `UPDATE orders SET status=$2,updated_at=$3 WHERE id=$1`, orderID, status, now); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,$2,$3,$4)`, orderID, status, integrationResultSource(status), now); err != nil {
+			return err
+		}
+	}
+	if status != domain.OrderStatusIntegrationFailed || (current != domain.OrderStatusPending && current != domain.OrderStatusIntegrationFailed) {
+		if _, err := tx.Exec(ctx, `DELETE FROM order_dispatch WHERE order_id=$1`, orderID); err != nil {
 			return err
 		}
 	}
@@ -451,7 +464,8 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 	// A new callback may report the current state. Record its event ID without
 	// changing updated_at; ordinary transitions still use the domain rules.
 	sameStateCallback := history.EventID != nil && currentStatus == status
-	if !sameStateCallback && !domain.CanTransition(currentStatus, status) {
+	latePartnerResult := currentStatus == domain.OrderStatusIntegrationFailed && history.Source == "restaurant" && status != domain.OrderStatusIntegrationFailed && status != domain.OrderStatusPending
+	if !sameStateCallback && !latePartnerResult && !domain.CanTransition(currentStatus, status) {
 		return &domain.OrderStatusTransitionError{From: currentStatus, To: status}
 	}
 
