@@ -11,6 +11,8 @@ import (
 
 	db "github.com/Aam-Shaegar/kitchenflow/internal/core/database/pgx"
 	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
+	cartdomain "github.com/Aam-Shaegar/kitchenflow/internal/features/cart/domain"
+	cartrepo "github.com/Aam-Shaegar/kitchenflow/internal/features/cart/repository"
 	d "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
 	repo "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/repository"
 	"github.com/google/uuid"
@@ -150,6 +152,146 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		}
 		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
 			t.Fatal("transactional read lost partner ID")
+		}
+	})
+	t.Run("atomic cart mutations", func(t *testing.T) {
+		carts := cartrepo.NewCartRepository(pool)
+		makeItem := func() (uuid.UUID, cartdomain.CartItem) {
+			id := newOrder()
+			o, err := repository.GetByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cat, item := uuid.New(), uuid.New()
+			if _, err := pool.Exec(ctx, `INSERT INTO menu_categories(id,restaurant_id,name) VALUES($1,$2,'Category')`, cat, o.RestaurantID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO menu_items(id,restaurant_id,category_id,external_id,name,price) VALUES($1,$2,$3,$4,'Item',100)`, item, o.RestaurantID, cat, item.String()); err != nil {
+				t.Fatal(err)
+			}
+			return o.RestaurantID, cartdomain.CartItem{MenuItemID: item, Name: "Item", UnitPrice: 100, Quantity: 1}
+		}
+		rid, item := makeItem()
+		user := uuid.NewString()
+		results := make(chan error, 80)
+		var wg sync.WaitGroup
+		for i := 0; i < 80; i++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); _, err := carts.AddToCart(ctx, user, rid, item); results <- err }()
+		}
+		wg.Wait()
+		close(results)
+		accepted := 0
+		for err := range results {
+			if err == nil {
+				accepted++
+			} else if !errors.Is(err, coreerrors.ErrInvalidArgument) {
+				t.Fatal(err)
+			}
+		}
+		c, err := carts.GetByUserID(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accepted != 50 || len(c.Items) != 1 || c.Items[0].Quantity != 50 || c.TotalAmount != 5000 {
+			t.Fatalf("accepted=%d cart=%+v", accepted, c)
+		}
+		if _, err := carts.SetQuantity(ctx, "stranger", c.Items[0].ID, 2); !errors.Is(err, coreerrors.ErrNotFound) {
+			t.Fatalf("ownership: %v", err)
+		}
+		if _, err := carts.SetQuantity(ctx, user, c.Items[0].ID, 51); !errors.Is(err, coreerrors.ErrInvalidArgument) {
+			t.Fatal("limit not enforced")
+		}
+		// Absolute quantity updates and relative additions have a serial outcome.
+		if _, err := carts.SetQuantity(ctx, user, c.Items[0].ID, 1); err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(2)
+		errs := make(chan error, 2)
+		go func() { defer wg.Done(); _, err := carts.SetQuantity(ctx, user, c.Items[0].ID, 10); errs <- err }()
+		go func() { defer wg.Done(); _, err := carts.AddToCart(ctx, user, rid, item); errs <- err }()
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		c, err = carts.GetByUserID(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Items[0].Quantity != 10 && c.Items[0].Quantity != 11 {
+			t.Fatalf("quantity=%d", c.Items[0].Quantity)
+		}
+		if c.TotalAmount != 100*int64(c.Items[0].Quantity) {
+			t.Fatal("inconsistent total")
+		}
+
+		// Remove and add also have a serial outcome: empty, or one new item.
+		idToRemove := c.Items[0].ID
+		wg.Add(2)
+		errs = make(chan error, 2)
+		go func() { defer wg.Done(); _, err := carts.RemoveCartItem(ctx, user, idToRemove); errs <- err }()
+		go func() { defer wg.Done(); _, err := carts.AddToCart(ctx, user, rid, item); errs <- err }()
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		c, err = carts.GetByUserID(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Items) > 1 || len(c.Items) == 1 && c.Items[0].Quantity != 1 {
+			t.Fatalf("remove/add outcome: %+v", c.Items)
+		}
+		if len(c.Items) == 0 {
+			c, err = carts.AddToCart(ctx, user, rid, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := carts.RemoveCartItem(ctx, user, c.Items[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := carts.RemoveCartItem(ctx, user, c.Items[0].ID); !errors.Is(err, coreerrors.ErrNotFound) {
+			t.Fatalf("missing removal: %v", err)
+		}
+		// Empty carts may switch restaurant; nonempty carts cannot mix partners.
+		other, otherItem := makeItem()
+		if _, err := carts.AddToCart(ctx, user, other, otherItem); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := carts.AddToCart(ctx, user, rid, item); !errors.Is(err, coreerrors.ErrConflict) {
+			t.Fatalf("mixed restaurant: %v", err)
+		}
+		if err := carts.ClearByUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+		if err := carts.ClearByUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+		// Two different restaurants racing to create the first cart: one winner.
+		user = uuid.NewString()
+		wg.Add(2)
+		errs = make(chan error, 2)
+		go func() { defer wg.Done(); _, err := carts.AddToCart(ctx, user, rid, item); errs <- err }()
+		go func() { defer wg.Done(); _, err := carts.AddToCart(ctx, user, other, otherItem); errs <- err }()
+		wg.Wait()
+		close(errs)
+		wins := 0
+		for err := range errs {
+			if err == nil {
+				wins++
+			} else if !errors.Is(err, coreerrors.ErrConflict) {
+				t.Fatal(err)
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("restaurant winners=%d", wins)
 		}
 	})
 	t.Run("one cart creates only one order with different keys", func(t *testing.T) {

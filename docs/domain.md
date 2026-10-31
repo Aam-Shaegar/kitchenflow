@@ -106,3 +106,5 @@ Checkout consumes the original cart atomically with order creation, before exter
 Cart item mutations increment a database-owned revision. Checkout carries the revision read with the cart and checks it atomically when consuming the cart; stale revisions abort checkout with 409. Apply migration 006 before starting the updated API.
 
 Cancellation requires a restaurant acknowledgement with the original external ID and cancelled status, or a cancellation callback. Restaurant refusal returns 409; unconfirmed outcomes return 503 and can be retried idempotently. The partner arbitrates cancellation versus preparation atomically.
+
+Cart mutations lock the user (transaction advisory lock) before the cart row, then mutate items and return the consistent resulting snapshot. This also serializes creation of the first cart. Relative additions accumulate; absolute quantity changes follow transaction order. Removal of an absent/foreign item returns 404.
