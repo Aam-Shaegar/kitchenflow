@@ -154,6 +154,85 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			t.Fatal("transactional read lost partner ID")
 		}
 	})
+	t.Run("history failure rolls back status and deduplication", func(t *testing.T) {
+		id := newOrder()
+		if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected history failure'; END $$; CREATE TRIGGER reject_history BEFORE INSERT ON order_status_history FOR EACH ROW EXECUTE FUNCTION reject_history()`); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = pool.Exec(ctx, `DROP TRIGGER IF EXISTS reject_history ON order_status_history`) }()
+		if err := apply(id, d.OrderStatusConfirmed, "fault-event"); err == nil {
+			t.Fatal("callback hid history failure")
+		}
+		assertState(id, d.OrderStatusPending, 0)
+		if err := repository.SaveIntegrationResult(ctx, id, id.String(), d.OrderStatusConfirmed); err == nil {
+			t.Fatal("HTTP result hid history failure")
+		}
+		assertState(id, d.OrderStatusPending, 0)
+		if _, err := pool.Exec(ctx, `UPDATE orders SET status='integration_failed' WHERE id=$1`, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.PrepareIntegrationRetry(ctx, id, id.String()); err == nil {
+			t.Fatal("retry hid history failure")
+		}
+		assertState(id, d.OrderStatusIntegrationFailed, 0)
+		if _, err := pool.Exec(ctx, `DROP TRIGGER reject_history ON order_status_history; UPDATE orders SET status='pending' WHERE id='`+id.String()+`'`); err != nil {
+			t.Fatal(err)
+		}
+		if err := apply(id, d.OrderStatusConfirmed, "fault-event"); err != nil {
+			t.Fatal(err)
+		}
+		assertState(id, d.OrderStatusConfirmed, 1)
+	})
+	t.Run("cart deletion failure aborts checkout and empty cart switch", func(t *testing.T) {
+		id := newOrder()
+		parent, err := repository.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		user := uuid.NewString()
+		cartID := uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO carts(id,user_id,restaurant_id) VALUES($1,$2,$3)`, cartID, user, parent.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_cart_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected cart delete failure'; END $$; CREATE TRIGGER reject_cart_delete BEFORE DELETE ON carts FOR EACH ROW EXECUTE FUNCTION reject_cart_delete()`); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _, _ = pool.Exec(ctx, `DROP TRIGGER IF EXISTS reject_cart_delete ON carts`) }()
+		now := time.Now()
+		o := &d.Order{ID: uuid.New(), UserID: user, RestaurantID: parent.RestaurantID, CheckoutCartID: &cartID, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: uuid.NewString(), CreatedAt: now, UpdatedAt: now}
+		o.StatusHistory = []d.OrderStatusHistory{{OrderID: o.ID, Status: d.OrderStatusPending, Source: "kitchen", CreatedAt: now}}
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); err == nil {
+			t.Fatal("checkout hid deletion failure")
+		}
+		saved, err := repository.GetByID(ctx, o.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved != nil {
+			t.Fatal("partial order committed")
+		}
+		carts := cartrepo.NewCartRepository(pool)
+		if _, err := carts.AddToCart(ctx, user, uuid.New(), cartdomain.CartItem{MenuItemID: uuid.New(), Name: "Item", UnitPrice: 100, Quantity: 1}); err == nil {
+			t.Fatal("empty cart switch hid deletion failure")
+		}
+		original, err := carts.GetByUserID(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if original == nil || original.ID != cartID {
+			t.Fatal("original cart lost")
+		}
+		if err := carts.ClearByUser(ctx, user); err == nil {
+			t.Fatal("clear hid deletion failure")
+		}
+		if _, err := pool.Exec(ctx, `DROP TRIGGER reject_cart_delete ON carts`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.CreateWithIdempotencyKey(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+		assertState(o.ID, d.OrderStatusPending, 1)
+	})
 	t.Run("atomic cart mutations", func(t *testing.T) {
 		carts := cartrepo.NewCartRepository(pool)
 		makeItem := func() (uuid.UUID, cartdomain.CartItem) {

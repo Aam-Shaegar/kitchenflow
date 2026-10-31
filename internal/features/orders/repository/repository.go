@@ -14,10 +14,8 @@ type OrderRepository interface {
 	GetByExternalOrderIDAndRestaurantID(ctx context.Context, externalOrderID string, restaurantID uuid.UUID) (*domain.Order, error)
 	ListByUserIDPaginated(ctx context.Context, userID string, limit, offset int) ([]domain.Order, error)
 	ListByRestaurantID(ctx context.Context, restaurantID uuid.UUID, limit, offset int) ([]domain.Order, error)
-	Update(ctx context.Context, order *domain.Order) error
 	CreateWithIdempotencyKey(ctx context.Context, order *domain.Order) (*domain.Order, error)
 	UpdateStatusWithHistory(ctx context.Context, orderID uuid.UUID, status domain.OrderStatus, history *domain.OrderStatusHistory) error
-	AddStatusHistory(ctx context.Context, history *domain.OrderStatusHistory) error
 	GetStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.OrderStatusHistory, error)
 	PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error
 	SaveIntegrationResult(ctx context.Context, orderID uuid.UUID, externalID string, status domain.OrderStatus) error

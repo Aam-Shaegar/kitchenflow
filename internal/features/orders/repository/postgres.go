@@ -322,19 +322,6 @@ func (r *PostgresOrderRepository) ListByRestaurantID(ctx context.Context, restau
 	return orders, nil
 }
 
-func (r *PostgresOrderRepository) Update(ctx context.Context, order *domain.Order) error {
-	query := `
-		UPDATE orders
-		SET external_order_id = $2, status = $3, total_amount = $4, updated_at = $5
-		WHERE id = $1
-	`
-	_, err := r.pool.Exec(ctx, query,
-		order.ID, order.ExternalOrderID, order.Status,
-		order.TotalAmount, order.UpdatedAt,
-	)
-	return err
-}
-
 // PrepareIntegrationRetry publishes the correlation ID and pending state before
 // calling the restaurant, so callbacks can arrive before its HTTP response.
 func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error {
@@ -411,48 +398,14 @@ func (r *PostgresOrderRepository) createOrderItemTx(ctx context.Context, tx core
 }
 
 func (r *PostgresOrderRepository) addStatusHistoryTx(ctx context.Context, tx core_database.Tx, history *domain.OrderStatusHistory) error {
-	// A repeated callback carries the same event_id, so skip it instead of duplicating history.
-	if history.EventID != nil {
-		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
-		var exists int
-		err := tx.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
-		if err == nil {
-			// We have seen this event before, so acknowledge it without touching the order.
-			return nil
-		}
-		if !errors.Is(err, core_database.ErrNoRows) {
-			return err
-		}
-	}
+	// Initial history belongs to the creation transaction. Any insert failure
+	// must abort creation; callback deduplication lives in UpdateStatusWithHistory.
 
 	query := `
 		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
 		VALUES ($1, $2, $3, $4, $5)
 	`
 	_, err := tx.Exec(ctx, query, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt)
-	return err
-}
-
-func (r *PostgresOrderRepository) AddStatusHistory(ctx context.Context, history *domain.OrderStatusHistory) error {
-	// Same duplicate guard outside a tx: repeating a callback must stay a no-op.
-	if history.EventID != nil {
-		checkQuery := `SELECT 1 FROM order_status_history WHERE event_id = $1`
-		var exists int
-		err := r.pool.QueryRow(ctx, checkQuery, *history.EventID).Scan(&exists)
-		if err == nil {
-			// Already handled this event, acknowledge it again without side effects.
-			return nil
-		}
-		if !errors.Is(err, core_database.ErrNoRows) {
-			return err
-		}
-	}
-
-	query := `
-		INSERT INTO order_status_history (order_id, status, source, event_id, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`
-	_, err := r.pool.Exec(ctx, query, history.OrderID, history.Status, history.Source, history.EventID, history.CreatedAt)
 	return err
 }
 
