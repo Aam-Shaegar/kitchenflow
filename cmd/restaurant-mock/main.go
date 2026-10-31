@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	ordersdomain "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
 	"github.com/google/uuid"
 )
 
@@ -88,6 +89,9 @@ func (s *MockStore) SetStatus(id, status string) bool {
 	defer s.mu.Unlock()
 	o, ok := s.orders[id]
 	if !ok {
+		return false
+	}
+	if o.Status != status && !ordersdomain.CanTransition(ordersdomain.OrderStatus(o.Status), ordersdomain.OrderStatus(status)) {
 		return false
 	}
 	o.Status = status
@@ -201,6 +205,10 @@ func handleOrders(store *MockStore, callbackURL, restaurantID string, cfg MockCo
 func handleOrderByID(store *MockStore, callbackURL, restaurantID string, cfg MockConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// The same prefix serves both the order card and the manual status trigger.
+		if r.URL.Path == "/api/v1/restaurant/orders/cancel" {
+			handleCancel(store)(w, r)
+			return
+		}
 		trimmed := strings.TrimPrefix(r.URL.Path, "/api/v1/restaurant/orders/")
 		parts := strings.Split(trimmed, "/")
 		id := parts[0]
@@ -321,7 +329,9 @@ func simulateOrderProcessing(store *MockStore, callbackURL, restaurantID, extern
 		if _, ok := store.Get(externalOrderID); !ok {
 			return
 		}
-		store.SetStatus(externalOrderID, status)
+		if !store.SetStatus(externalOrderID, status) {
+			return
+		}
 		sendCallback(callbackURL, restaurantID, externalOrderID, status)
 	}
 }
@@ -377,5 +387,36 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
 		log.Printf("Failed to write health response: %v", err)
+	}
+}
+
+func handleCancel(store *MockStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		var req struct {
+			ExternalOrderID string `json:"external_order_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ExternalOrderID == "" {
+			http.Error(w, "invalid request", 400)
+			return
+		}
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		o, ok := store.orders[req.ExternalOrderID]
+		if !ok {
+			http.Error(w, "not found", 404)
+			return
+		}
+		if o.Status != "cancelled" && !ordersdomain.CanTransition(ordersdomain.OrderStatus(o.Status), ordersdomain.OrderStatusCancelled) {
+			http.Error(w, "already cooking", 409)
+			return
+		}
+		o.Status = "cancelled"
+		o.UpdatedAt = time.Now()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CreateOrderResponse{ExternalOrderID: o.ExternalOrderID, Status: o.Status})
 	}
 }

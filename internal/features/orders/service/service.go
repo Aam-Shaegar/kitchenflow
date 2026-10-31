@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"time"
 
@@ -288,16 +289,42 @@ func (s *OrderService) CancelOrder(ctx context.Context, id uuid.UUID, userID str
 	if order == nil {
 		return nil, errors.ErrNotFound
 	}
+	if order.Status == orders_domain.OrderStatusCancelled {
+		return order, nil
+	}
 	if !orders_domain.CanTransition(order.Status, orders_domain.OrderStatusCancelled) {
 		return nil, errors.ErrConflict
 	}
-	history := &orders_domain.OrderStatusHistory{
-		OrderID:   order.ID,
-		Status:    orders_domain.OrderStatusCancelled,
-		Source:    "kitchen",
-		EventID:   nil,
-		CreatedAt: time.Now(),
+	if order.ExternalOrderID == nil || *order.ExternalOrderID == "" {
+		return nil, errors.ErrIntegrationUnavailable
 	}
+	restaurant, err := s.restaurantProvider.GetByIDForOrder(ctx, order.RestaurantID)
+	if err != nil {
+		return nil, err
+	}
+	if restaurant == nil {
+		return nil, errors.ErrNotFound
+	}
+	if err := s.restaurantClient.ValidateEndpoint(restaurant.IntegrationBaseURL); err != nil {
+		return nil, err
+	}
+	response, sendErr := s.restaurantClient.CancelOrder(ctx, restaurant.IntegrationBaseURL, *order.ExternalOrderID)
+	if sendErr != nil || response == nil || response.ExternalOrderID != *order.ExternalOrderID || response.Status != "cancelled" {
+		// A callback may have confirmed cancellation while the response was lost.
+		fresh, err := s.repo.GetByIDAndUserID(ctx, id, userID)
+		if err != nil {
+			return nil, err
+		}
+		if fresh != nil && fresh.Status == orders_domain.OrderStatusCancelled {
+			return fresh, nil
+		}
+		if stderrors.Is(sendErr, errors.ErrConflict) {
+			return nil, errors.ErrConflict
+		}
+		return nil, errors.ErrIntegrationUnavailable
+	}
+	eventID := "cancel-response:" + order.ID.String()
+	history := &orders_domain.OrderStatusHistory{OrderID: order.ID, Status: orders_domain.OrderStatusCancelled, Source: "restaurant", EventID: &eventID, CreatedAt: time.Now()}
 	if err := s.repo.UpdateStatusWithHistory(ctx, order.ID, orders_domain.OrderStatusCancelled, history); err != nil {
 		return nil, err
 	}

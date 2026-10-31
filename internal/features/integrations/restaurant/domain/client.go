@@ -8,6 +8,7 @@ import (
 // responses and callbacks. Creation responses use pending, confirmed or cancelled.
 type RestaurantClient interface {
 	ValidateEndpoint(baseURL string) error
+	CancelOrder(ctx context.Context, baseURL, externalOrderID string) (*CreateOrderResponse, error)
 	CreateOrder(ctx context.Context, baseURL string, req CreateOrderRequest) (*CreateOrderResponse, error)
 }
 

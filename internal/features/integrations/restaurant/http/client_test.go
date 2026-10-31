@@ -136,3 +136,37 @@ func TestIPPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelOrderHTTPContract(t *testing.T) {
+	for _, code := range []int{200, 409, 503} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/partner/api/v1/restaurant/orders/cancel" || r.Method != "POST" {
+				t.Errorf("wrong cancellation route %s %s", r.Method, r.URL.Path)
+			}
+			var req struct {
+				ExternalOrderID string `json:"external_order_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+			}
+			if req.ExternalOrderID != "order" {
+				t.Error("wrong order ID")
+			}
+			w.WriteHeader(code)
+			_ = json.NewEncoder(w).Encode(domain.CreateOrderResponse{ExternalOrderID: "order", Status: "cancelled"})
+		}))
+		c, err := NewHTTPClient(time.Second, []string{server.URL}, []string{"127.0.0.0/8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := c.CancelOrder(context.Background(), server.URL+"/partner", "order")
+		if code == 200 {
+			if err != nil || result.Status != "cancelled" {
+				t.Fatalf("result %+v error %v", result, err)
+			}
+		} else if err == nil {
+			t.Fatal("accepted failure response")
+		}
+		server.Close()
+	}
+}

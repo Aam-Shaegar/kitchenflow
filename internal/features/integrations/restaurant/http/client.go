@@ -161,11 +161,21 @@ func (c *HTTPClient) dialContext(ctx context.Context, network, address string) (
 }
 
 func (c *HTTPClient) CreateOrder(ctx context.Context, baseURL string, req domain.CreateOrderRequest) (*domain.CreateOrderResponse, error) {
+	return c.post(ctx, baseURL, "api/v1/restaurant/orders", req)
+}
+
+func (c *HTTPClient) CancelOrder(ctx context.Context, baseURL, externalOrderID string) (*domain.CreateOrderResponse, error) {
+	return c.post(ctx, baseURL, "api/v1/restaurant/orders/cancel", struct {
+		ExternalOrderID string `json:"external_order_id"`
+	}{externalOrderID})
+}
+
+func (c *HTTPClient) post(ctx context.Context, baseURL, path string, req any) (*domain.CreateOrderResponse, error) {
 	if err := c.ValidateEndpoint(baseURL); err != nil {
 		return nil, err
 	}
 	endpoint, _ := url.Parse(baseURL)
-	endpoint = endpoint.JoinPath("api/v1/restaurant/orders")
+	endpoint = endpoint.JoinPath(path)
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -180,6 +190,9 @@ func (c *HTTPClient) CreateOrder(ctx context.Context, baseURL string, req domain
 		return nil, fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil, coreerrors.ErrConflict
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
