@@ -7,66 +7,74 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
-	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
+	db "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
 )
 
-// Run brings the schema up to date by applying pending *.sql files in name order.
-// Applied files are recorded in schema_migrations, so restarts stay safe and
-// fresh installs converge to the same schema as long-lived databases.
-func Run(ctx context.Context, pool core_database.Pool, dir string) error {
+type migration struct{ name, sql string }
+
+// Run applies the pending batch and its ledger in one transaction. Migration
+// files must be transaction-compatible and must not manage transactions themselves.
+func Run(ctx context.Context, pool db.Pool, dir string) error {
 	if dir == "" {
 		dir = "migrations"
 	}
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			filename TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		// Slim images may ship without migrations; that simply means nothing to apply.
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() {
+	var files []migration
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".sql") {
-			continue
-		}
-		files = append(files, name)
-	}
-	sort.Strings(files)
-
-	for _, name := range files {
-		var count int
-		row := pool.QueryRow(ctx, `SELECT 1 FROM schema_migrations WHERE filename = $1`, name)
-		if err := row.Scan(&count); err == nil {
-			continue // this file was applied on a previous boot
-		}
-		body, err := os.ReadFile(filepath.Join(dir, name))
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
-		if len(strings.TrimSpace(string(body))) == 0 {
+		if strings.TrimSpace(string(body)) == "" {
+			return fmt.Errorf("migration %s is empty", entry.Name())
+		}
+		files = append(files, migration{entry.Name(), string(body)})
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no SQL migrations in %s", dir)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin migrations: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}()
+	// Transaction-scoped, database-wide lock: never leak a session lock into pool.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(8150811)`); err != nil {
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(filename TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+	for _, file := range files {
+		var applied bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename=$1)`, file.name).Scan(&applied); err != nil {
+			return fmt.Errorf("check migration %s: %w", file.name, err)
+		}
+		if applied {
 			continue
 		}
-		if _, err := pool.Exec(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", name, err)
+		if _, err := tx.Exec(ctx, file.sql); err != nil {
+			return fmt.Errorf("apply migration %s: %w", file.name, err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`, name); err != nil {
-			return fmt.Errorf("record migration %s: %w", name, err)
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(filename) VALUES($1)`, file.name); err != nil {
+			return fmt.Errorf("record migration %s: %w", file.name, err)
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit migrations: %w", err)
 	}
 	return nil
 }
