@@ -12,7 +12,7 @@ import (
 func TestCancellationRacesWithCooking(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		store := NewMockStore()
-		store.Put(&StoredOrder{ExternalOrderID: "order", Status: "confirmed"})
+		store.CreateOrGet(CreateOrderRequest{ExternalOrderID: "order"}, "confirmed", true)
 		var wg sync.WaitGroup
 		wg.Add(2)
 		var cooked bool
@@ -42,7 +42,7 @@ func TestCancellationRacesWithCooking(t *testing.T) {
 }
 func TestCancelRepeatAndAutoProcessingStops(t *testing.T) {
 	store := NewMockStore()
-	store.Put(&StoredOrder{ExternalOrderID: "order", Status: "pending"})
+	store.CreateOrGet(CreateOrderRequest{ExternalOrderID: "order"}, "pending", true)
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
 		handleCancel(store)(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"external_order_id":"order"}`)))

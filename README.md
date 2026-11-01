@@ -615,3 +615,7 @@ Repository writes translate duplicate keys to HTTP 409 and missing foreign-key r
 ### Menu and restaurant input validation
 
 Creating a menu item requires an explicit integer price (0 is allowed), category_id and nonblank name. Both creation and patch enforce price 0–1,000,000,000 kopecks, names up to 200 Unicode characters, descriptions up to 2000, external IDs up to 128 and integration URLs up to 512. Category names are limited to 120 characters and position must be nonnegative. Names must contain non-whitespace characters and are trimmed. Menu and restaurant requests must be JSON objects: explicit null values and unknown properties are rejected with 400. Omitted patch properties leave existing values unchanged. No database migration is required.
+
+### Restaurant mock creation replays
+
+The mock atomically creates or retrieves an order by the required `external_order_id` (nonblank, at most 128 bytes). The first request returns 201 and alone starts automatic processing or emits a rejection callback; a matching replay returns 200 with the current saved status. Address and ordered item snapshots must match exactly; a changed payload returns 409 without modifying timestamps, items or status. Matching replays still succeed when the mock is switched to failing mode after the order was accepted. Store reads and creation results are copies, so callers cannot overwrite stored state. Deduplication lasts for the lifetime of the mock process; its in-memory store is cleared on restart.

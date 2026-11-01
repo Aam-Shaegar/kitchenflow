@@ -54,19 +54,37 @@ type StoredOrder struct {
 }
 
 type MockStore struct {
-	createMu sync.Mutex
-	mu       sync.RWMutex
-	orders   map[string]*StoredOrder
+	mu     sync.RWMutex
+	orders map[string]*StoredOrder
 }
 
 func NewMockStore() *MockStore {
 	return &MockStore{orders: map[string]*StoredOrder{}}
 }
 
-func (s *MockStore) Put(o *StoredOrder) {
+// CreateOrGet is the only creation path. The returned flag alone grants the
+// caller permission to start processing or emit the initial rejection callback.
+func (s *MockStore) CreateOrGet(req CreateOrderRequest, status string, available bool) (*StoredOrder, bool, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if previous, ok := s.orders[req.ExternalOrderID]; ok {
+		if previous.DeliveryAddress != req.DeliveryAddress || !slices.Equal(previous.Items, req.Items) {
+			return nil, false, http.StatusConflict
+		}
+		return cloneOrder(previous), false, 0
+	}
+	if !available {
+		return nil, false, http.StatusServiceUnavailable
+	}
+	now := time.Now()
+	o := &StoredOrder{ExternalOrderID: req.ExternalOrderID, Items: append([]CreateOrderItem(nil), req.Items...), DeliveryAddress: req.DeliveryAddress, Status: status, CreatedAt: now, UpdatedAt: now}
 	s.orders[o.ExternalOrderID] = o
+	return cloneOrder(o), true, 0
+}
+func cloneOrder(o *StoredOrder) *StoredOrder {
+	copy := *o
+	copy.Items = append([]CreateOrderItem(nil), o.Items...)
+	return &copy
 }
 
 func (s *MockStore) Get(id string) (*StoredOrder, bool) {
@@ -76,9 +94,7 @@ func (s *MockStore) Get(id string) (*StoredOrder, bool) {
 	if !ok {
 		return nil, false
 	}
-	copy := *o
-	copy.Items = append([]CreateOrderItem(nil), o.Items...)
-	return &copy, true
+	return cloneOrder(o), true
 }
 
 func (s *MockStore) List() []*StoredOrder {
@@ -86,7 +102,7 @@ func (s *MockStore) List() []*StoredOrder {
 	defer s.mu.RUnlock()
 	out := make([]*StoredOrder, 0, len(s.orders))
 	for _, o := range s.orders {
-		out = append(out, o)
+		out = append(out, cloneOrder(o))
 	}
 	return out
 }
@@ -265,74 +281,35 @@ func handleCreateOrder(store *MockStore, callbackURL, restaurantID string, cfg M
 			return
 		}
 
-		store.createMu.Lock()
-		defer store.createMu.Unlock()
-		if previous, ok := store.Get(req.ExternalOrderID); ok {
-			if previous.DeliveryAddress != req.DeliveryAddress || !slices.Equal(previous.Items, req.Items) {
-				http.Error(w, "order ID payload conflict", 409)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(CreateOrderResponse{ExternalOrderID: previous.ExternalOrderID, Status: previous.Status})
+		if strings.TrimSpace(req.ExternalOrderID) == "" || len(req.ExternalOrderID) > 128 {
+			http.Error(w, "external_order_id required (max 128)", http.StatusBadRequest)
 			return
 		}
-		// Failing mode lets us rehearse outages: every create attempt gets a 503.
-		if cfg.Mode == "failing" {
-			http.Error(w, "restaurant temporarily unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		externalOrderID := req.ExternalOrderID
-		if externalOrderID == "" {
-			externalOrderID = uuid.New().String()
-		}
-
-		// A rejection still starts with 201 so Kitchen learns the external id;
-		// the following cancelled callback then walks the legal pending -> cancelled edge.
+		status := "confirmed"
 		if cfg.Mode == "rejecting" || strings.Contains(strings.ToLower(req.DeliveryAddress), "reject") {
-			store.Put(&StoredOrder{
-				ExternalOrderID: externalOrderID,
-				Items:           req.Items,
-				DeliveryAddress: req.DeliveryAddress,
-				Status:          "cancelled",
-				CreatedAt:       time.Now(),
-				UpdatedAt:       time.Now(),
-			})
-			go sendCallback(callbackURL, restaurantID, externalOrderID, "cancelled")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(CreateOrderResponse{
-				ExternalOrderID: externalOrderID,
-				Status:          "cancelled",
-			})
+			status = "cancelled"
+		}
+		order, created, code := store.CreateOrGet(req, status, cfg.Mode != "failing")
+		if code != 0 {
+			http.Error(w, http.StatusText(code), code)
 			return
 		}
-
-		store.Put(&StoredOrder{
-			ExternalOrderID: externalOrderID,
-			Items:           req.Items,
-			DeliveryAddress: req.DeliveryAddress,
-			Status:          "confirmed",
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-		})
-
-		resp := CreateOrderResponse{
-			ExternalOrderID: externalOrderID,
-			Status:          "confirmed",
+		// Dispatch side effects before writing: a lost HTTP response must not
+		// prevent the one newly accepted order from starting processing.
+		if created {
+			if status == "cancelled" {
+				go sendCallback(callbackURL, restaurantID, order.ExternalOrderID, status)
+			} else if cfg.Mode != "manual" {
+				go simulateOrderProcessing(store, callbackURL, restaurantID, order.ExternalOrderID, cfg)
+			}
 		}
-
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
+		if created {
+			w.WriteHeader(http.StatusCreated)
+		}
+		if err := json.NewEncoder(w).Encode(CreateOrderResponse{ExternalOrderID: order.ExternalOrderID, Status: order.Status}); err != nil {
 			log.Printf("Failed to encode response: %v", err)
 		}
-
-		if cfg.Mode == "manual" {
-			log.Printf("Manual mode: order %s waits for explicit status trigger", externalOrderID)
-			return
-		}
-		go simulateOrderProcessing(store, callbackURL, restaurantID, externalOrderID, cfg)
 	}
 }
 

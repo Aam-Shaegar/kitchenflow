@@ -5,7 +5,7 @@ import (
 )
 
 // RestaurantClient implementations must echo the request ExternalOrderID in
-// responses and callbacks. Creation responses use pending, confirmed or cancelled.
+// responses and callbacks. Creation replays return the current saved partner status.
 type RestaurantClient interface {
 	ValidateEndpoint(baseURL string) error
 	CancelOrder(ctx context.Context, baseURL, externalOrderID string) (*CreateOrderResponse, error)
