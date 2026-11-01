@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/domain"
@@ -93,10 +94,10 @@ type CreateRestaurantInput struct {
 }
 
 func (s *RestaurantService) Create(ctx context.Context, in CreateRestaurantInput) (*domain.Restaurant, error) {
-	if strings.TrimSpace(in.Name) == "" || len(in.Name) > 200 {
+	if strings.TrimSpace(in.Name) == "" || utf8.RuneCountInString(in.Name) > 200 {
 		return nil, errors.ErrInvalidArgument
 	}
-	if len(in.Description) > 2000 {
+	if utf8.RuneCountInString(in.ExternalID) > 128 || utf8.RuneCountInString(in.IntegrationBaseURL) > 512 || utf8.RuneCountInString(in.Description) > 2000 {
 		return nil, errors.ErrInvalidArgument
 	}
 	externalID := strings.TrimSpace(in.ExternalID)
@@ -134,13 +135,13 @@ func (s *RestaurantService) Update(ctx context.Context, id uuid.UUID, in UpdateR
 		return nil, err
 	}
 	if in.Name != nil {
-		if strings.TrimSpace(*in.Name) == "" || len(*in.Name) > 200 {
+		if strings.TrimSpace(*in.Name) == "" || utf8.RuneCountInString(*in.Name) > 200 {
 			return nil, errors.ErrInvalidArgument
 		}
 		rest.Name = strings.TrimSpace(*in.Name)
 	}
 	if in.Description != nil {
-		if len(*in.Description) > 2000 {
+		if utf8.RuneCountInString(*in.Description) > 2000 {
 			return nil, errors.ErrInvalidArgument
 		}
 		rest.Description = *in.Description
@@ -149,6 +150,9 @@ func (s *RestaurantService) Update(ctx context.Context, id uuid.UUID, in UpdateR
 		rest.IsOpen = *in.IsOpen
 	}
 	if in.IntegrationBaseURL != nil {
+		if utf8.RuneCountInString(*in.IntegrationBaseURL) > 512 {
+			return nil, errors.ErrInvalidArgument
+		}
 		rest.IntegrationBaseURL = strings.TrimSpace(*in.IntegrationBaseURL)
 	}
 	rest.UpdatedAt = time.Now()

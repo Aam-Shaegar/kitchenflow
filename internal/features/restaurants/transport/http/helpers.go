@@ -1,20 +1,10 @@
 package handler
 
 import (
-	"encoding/json"
-	"fmt"
+	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
+	request "github.com/Aam-Shaegar/kitchenflow/internal/core/http/request"
 	"net/http"
-
-	core_error "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 )
 
-func decodeJSON(r *http.Request, dest any) error {
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		return fmt.Errorf("decode json: %w", core_error.ErrInvalidArgument)
-	}
-	return nil
-}
-
-func errInvalid() error {
-	return core_error.ErrInvalidArgument
-}
+func decodeJSON(r *http.Request, dest any) error { return request.DecodeObject(r, dest) }
+func errInvalid() error                          { return coreerrors.ErrInvalidArgument }

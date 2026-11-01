@@ -611,3 +611,7 @@ Startup reads and validates all SQL migration files before touching the database
 ### Database constraint responses
 
 Repository writes translate duplicate keys to HTTP 409 and missing foreign-key references to HTTP 404. Deleting a referenced category or menu item returns 409. The same rules apply to constraints deferred until commit. Database causes remain available in internal errors for diagnostics; responses omit SQL and constraint details. Unexpected database failures continue to return 500. No schema migration is needed.
+
+### Menu and restaurant input validation
+
+Creating a menu item requires an explicit integer price (0 is allowed), category_id and nonblank name. Both creation and patch enforce price 0–1,000,000,000 kopecks, names up to 200 Unicode characters, descriptions up to 2000, external IDs up to 128 and integration URLs up to 512. Category names are limited to 120 characters and position must be nonnegative. Names must contain non-whitespace characters and are trimmed. Menu and restaurant requests must be JSON objects: explicit null values and unknown properties are rejected with 400. Omitted patch properties leave existing values unchanged. No database migration is required.

@@ -4,11 +4,12 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/menu/domain"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/menu/repository"
+	"github.com/google/uuid"
 )
 
 type MenuService struct {
@@ -49,7 +50,7 @@ func (s *MenuService) GetItemsByIDs(ctx context.Context, ids []uuid.UUID) ([]dom
 }
 
 func (s *MenuService) CreateCategory(ctx context.Context, restaurantID uuid.UUID, name string, position int) (*domain.MenuCategory, error) {
-	if strings.TrimSpace(name) == "" || len(name) > 120 {
+	if position < 0 || strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 120 {
 		return nil, errors.ErrInvalidArgument
 	}
 	now := time.Now()
@@ -79,7 +80,10 @@ type CreateItemInput struct {
 }
 
 func (s *MenuService) CreateItem(ctx context.Context, in CreateItemInput) (*domain.MenuItem, error) {
-	if strings.TrimSpace(in.Name) == "" || len(in.Name) > 200 {
+	if strings.TrimSpace(in.Name) == "" || utf8.RuneCountInString(in.Name) > 200 {
+		return nil, errors.ErrInvalidArgument
+	}
+	if utf8.RuneCountInString(in.Description) > 2000 || utf8.RuneCountInString(in.ExternalID) > 128 {
 		return nil, errors.ErrInvalidArgument
 	}
 	if in.Price < 0 || in.Price > 10_000_000_00 {
@@ -132,13 +136,13 @@ func (s *MenuService) UpdateItem(ctx context.Context, id uuid.UUID, in UpdateIte
 		return nil, errors.ErrNotFound
 	}
 	if in.Name != nil {
-		if strings.TrimSpace(*in.Name) == "" || len(*in.Name) > 200 {
+		if strings.TrimSpace(*in.Name) == "" || utf8.RuneCountInString(*in.Name) > 200 {
 			return nil, errors.ErrInvalidArgument
 		}
 		item.Name = strings.TrimSpace(*in.Name)
 	}
 	if in.Description != nil {
-		if len(*in.Description) > 2000 {
+		if utf8.RuneCountInString(*in.Description) > 2000 {
 			return nil, errors.ErrInvalidArgument
 		}
 		item.Description = *in.Description

@@ -1,15 +1,14 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/google/uuid"
 	core_errors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	core_http_request "github.com/Aam-Shaegar/kitchenflow/internal/core/http/request"
 	core_http_response "github.com/Aam-Shaegar/kitchenflow/internal/core/http/response"
 	core_logger "github.com/Aam-Shaegar/kitchenflow/internal/core/logger"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/menu/service"
+	"github.com/google/uuid"
 )
 
 type MenuHandler struct {
@@ -105,7 +104,7 @@ type CreateMenuItemRequest struct {
 	ExternalID  string `json:"external_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Price       int64  `json:"price"`
+	Price       *int64 `json:"price"`
 }
 
 func (h *MenuHandler) CreateItem(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +122,10 @@ func (h *MenuHandler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		handler.ErrorResponse(err, "invalid request")
 		return
 	}
+	if req.Price == nil {
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "price is required")
+		return
+	}
 	categoryID, err := core_http_request.ParseUUID(req.CategoryID)
 	if err != nil {
 		handler.ErrorResponse(err, "invalid category ID")
@@ -134,7 +137,7 @@ func (h *MenuHandler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		ExternalID:   req.ExternalID,
 		Name:         req.Name,
 		Description:  req.Description,
-		Price:        req.Price,
+		Price:        *req.Price,
 	})
 	if err != nil {
 		handler.ErrorResponse(err, "failed to create menu item")
@@ -209,8 +212,5 @@ func (h *MenuHandler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 // decodeBody reads a JSON body. Any failure is the client's fault,
 // so we label it invalid input and the API answers 400, never 500.
 func decodeBody(r *http.Request, dest any) error {
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		return core_errors.ErrInvalidArgument
-	}
-	return nil
+	return core_http_request.DecodeObject(r, dest)
 }

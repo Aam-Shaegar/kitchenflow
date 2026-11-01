@@ -134,7 +134,7 @@ paths:
               type: object
               required: [name]
               properties:
-                name: { type: string, maxLength: 120 }
+                name: { type: string, minLength: 1, pattern: '\S', maxLength: 120 }
                 position: { type: integer, minimum: 0 }
       responses:
         '201':
@@ -510,17 +510,19 @@ components:
 
     CreateRestaurantRequest:
       type: object
+      additionalProperties: false
       required: [name]
       properties:
-        name: { type: string, maxLength: 200 }
+        name: { type: string, minLength: 1, pattern: '\S', maxLength: 200 }
         description: { type: string, maxLength: 2000 }
         external_id: { type: string, maxLength: 128 }
         integration_base_url: { type: string, maxLength: 512, description: "HTTP(S) base URL; dispatch requires operator-approved origin and network. Empty disables integration (checkout/retry returns 503)." }
 
     UpdateRestaurantRequest:
       type: object
+      additionalProperties: false
       properties:
-        name: { type: string, maxLength: 200 }
+        name: { type: string, minLength: 1, pattern: '\S', maxLength: 200 }
         description: { type: string, maxLength: 2000 }
         is_open: { type: boolean }
         integration_base_url: { type: string, maxLength: 512, description: "HTTP(S) base URL; dispatch requires operator-approved origin and network. Empty disables integration (checkout/retry returns 503)." }
@@ -539,20 +541,22 @@ components:
 
     CreateMenuItemRequest:
       type: object
+      additionalProperties: false
       required: [category_id, name, price]
       properties:
         category_id: { type: string, format: uuid }
-        external_id: { type: string }
-        name: { type: string, maxLength: 200 }
+        external_id: { type: string, maxLength: 128 }
+        name: { type: string, minLength: 1, pattern: '\S', maxLength: 200 }
         description: { type: string, maxLength: 2000 }
-        price: { type: integer, minimum: 0, description: "Price in minor units (kopecks)" }
+        price: { type: integer, minimum: 0, maximum: 1000000000, description: "Price in minor units (kopecks)" }
 
     UpdateMenuItemRequest:
       type: object
+      additionalProperties: false
       properties:
-        name: { type: string, maxLength: 200 }
+        name: { type: string, minLength: 1, pattern: '\S', maxLength: 200 }
         description: { type: string, maxLength: 2000 }
-        price: { type: integer, minimum: 0 }
+        price: { type: integer, minimum: 0, maximum: 1000000000 }
         is_available: { type: boolean }
         category_id: { type: string, format: uuid }
 
