@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/domain"
+	"github.com/google/uuid"
 )
 
 type PostgresRestaurantRepository struct {
@@ -70,7 +70,7 @@ func (r *PostgresRestaurantRepository) Create(ctx context.Context, rest *domain.
 		rest.ID, rest.ExternalID, rest.Name, rest.Description,
 		rest.IsOpen, rest.IntegrationBaseURL, rest.CreatedAt, rest.UpdatedAt,
 	)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresRestaurantRepository) Update(ctx context.Context, rest *domain.Restaurant) error {
@@ -83,7 +83,7 @@ func (r *PostgresRestaurantRepository) Update(ctx context.Context, rest *domain.
 		rest.ID, rest.Name, rest.Description,
 		rest.IsOpen, rest.IntegrationBaseURL, rest.UpdatedAt,
 	)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresRestaurantRepository) scanRestaurant(row core_database.Row) (*domain.Restaurant, error) {

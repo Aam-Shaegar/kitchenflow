@@ -14,12 +14,17 @@ import (
 	"testing"
 	"time"
 
+	coredb "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
 	db "github.com/Aam-Shaegar/kitchenflow/internal/core/database/pgx"
 	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	cartdomain "github.com/Aam-Shaegar/kitchenflow/internal/features/cart/domain"
 	cartrepo "github.com/Aam-Shaegar/kitchenflow/internal/features/cart/repository"
+	menudomain "github.com/Aam-Shaegar/kitchenflow/internal/features/menu/domain"
+	menurepo "github.com/Aam-Shaegar/kitchenflow/internal/features/menu/repository"
 	d "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
 	repo "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/repository"
+	restdomain "github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/domain"
+	restrepo "github.com/Aam-Shaegar/kitchenflow/internal/features/restaurants/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -164,6 +169,61 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		}
 		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
 			t.Fatal("transactional read lost partner ID")
+		}
+	})
+	t.Run("constraint errors have domain semantics", func(t *testing.T) {
+		restaurants := restrepo.NewRestaurantRepository(pool)
+		menus := menurepo.NewMenuRepository(pool)
+		id := newOrder()
+		o, err := repository.GetByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		r := &restdomain.Restaurant{ID: uuid.New(), ExternalID: uuid.NewString(), Name: "Constraint test", IntegrationBaseURL: "http://partner", CreatedAt: now, UpdatedAt: now}
+		if err := restaurants.Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		r.ID = uuid.New()
+		if err := restaurants.Create(ctx, r); !errors.Is(err, coreerrors.ErrConflict) {
+			t.Fatalf("duplicate: %v", err)
+		}
+		cat := &menudomain.MenuCategory{ID: uuid.New(), RestaurantID: uuid.New(), Name: "Category", CreatedAt: now, UpdatedAt: now}
+		if err := menus.CreateCategory(ctx, cat); !errors.Is(err, coreerrors.ErrNotFound) {
+			t.Fatalf("missing parent: %v", err)
+		}
+		cat.RestaurantID = o.RestaurantID
+		if err := menus.CreateCategory(ctx, cat); err != nil {
+			t.Fatal(err)
+		}
+		item := &menudomain.MenuItem{ID: uuid.New(), RestaurantID: o.RestaurantID, CategoryID: cat.ID, ExternalID: uuid.NewString(), Name: "Item", Price: 100, CreatedAt: now, UpdatedAt: now}
+		if err := menus.CreateItem(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+		if err := menus.DeleteCategory(ctx, cat.ID); !errors.Is(err, coreerrors.ErrConflict) {
+			t.Fatalf("used category: %v", err)
+		}
+		carts := cartrepo.NewCartRepository(pool)
+		if _, err := carts.AddToCart(ctx, uuid.NewString(), o.RestaurantID, cartdomain.CartItem{MenuItemID: item.ID, Name: item.Name, UnitPrice: 100, Quantity: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := menus.DeleteItem(ctx, item.ID); !errors.Is(err, coreerrors.ErrConflict) {
+			t.Fatalf("used item: %v", err)
+		}
+		// A DEFERRABLE foreign key may fail only when committing the transaction.
+		if _, err := pool.Exec(ctx, `CREATE TABLE deferred_parent(id integer PRIMARY KEY); CREATE TABLE deferred_child(parent integer REFERENCES deferred_parent(id) DEFERRABLE INITIALLY DEFERRED)`); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO deferred_child VALUES(123)`); err != nil {
+			t.Fatal(err)
+		}
+		err = coredb.WriteError(tx.Commit(ctx))
+		if !errors.Is(err, coreerrors.ErrNotFound) || !errors.Is(err, coredb.ErrViolatesForeignKey) {
+			t.Fatalf("deferred FK: %v", err)
 		}
 	})
 	t.Run("worker recovers persisted order after process loss", func(t *testing.T) {

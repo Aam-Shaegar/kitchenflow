@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	core_database "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/menu/domain"
+	"github.com/google/uuid"
 )
 
 type PostgresMenuRepository struct {
@@ -181,7 +181,7 @@ func (r *PostgresMenuRepository) CreateCategory(ctx context.Context, cat *domain
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 	_, err := r.pool.Exec(ctx, query, cat.ID, cat.RestaurantID, cat.Name, cat.Position, cat.CreatedAt, cat.UpdatedAt)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresMenuRepository) UpdateCategory(ctx context.Context, cat *domain.MenuCategory) error {
@@ -189,13 +189,13 @@ func (r *PostgresMenuRepository) UpdateCategory(ctx context.Context, cat *domain
 		UPDATE menu_categories SET name = $2, position = $3, updated_at = $4 WHERE id = $1
 	`
 	_, err := r.pool.Exec(ctx, query, cat.ID, cat.Name, cat.Position, cat.UpdatedAt)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresMenuRepository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM menu_categories WHERE id = $1`
 	_, err := r.pool.Exec(ctx, query, id)
-	return err
+	return core_database.DeleteError(err)
 }
 
 func (r *PostgresMenuRepository) CreateItem(ctx context.Context, item *domain.MenuItem) error {
@@ -208,7 +208,7 @@ func (r *PostgresMenuRepository) CreateItem(ctx context.Context, item *domain.Me
 		item.Name, item.Description, item.Price, item.IsAvailable,
 		item.CreatedAt, item.UpdatedAt,
 	)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresMenuRepository) UpdateItem(ctx context.Context, item *domain.MenuItem) error {
@@ -221,13 +221,13 @@ func (r *PostgresMenuRepository) UpdateItem(ctx context.Context, item *domain.Me
 		item.ID, item.CategoryID, item.Name, item.Description,
 		item.Price, item.IsAvailable, item.UpdatedAt,
 	)
-	return err
+	return core_database.WriteError(err)
 }
 
 func (r *PostgresMenuRepository) DeleteItem(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM menu_items WHERE id = $1`
 	_, err := r.pool.Exec(ctx, query, id)
-	return err
+	return core_database.DeleteError(err)
 }
 
 var _ MenuRepository = (*PostgresMenuRepository)(nil)

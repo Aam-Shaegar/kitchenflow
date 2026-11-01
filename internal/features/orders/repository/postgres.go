@@ -91,7 +91,7 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 	// Everything below must succeed or fail together, so we wrap it in one transaction.
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, core_database.WriteError(err)
 	}
 	// Rollback on the happy path is a harmless no-op (the tx is already committed),
 	// so we deliberately ignore its error here.
@@ -120,7 +120,7 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 			}
 			return existing, nil
 		}
-		return nil, err
+		return nil, core_database.WriteError(err)
 	}
 
 	if returnedID != order.ID {
@@ -134,19 +134,19 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 
 	if order.DispatchBaseURL != "" {
 		if _, err := tx.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url,available_at) VALUES($1,$2,now()+interval '30 seconds')`, order.ID, order.DispatchBaseURL); err != nil {
-			return nil, err
+			return nil, core_database.WriteError(err)
 		}
 	}
 	// The order row exists, now persist its items and the initial history atomically.
 	for _, item := range order.Items {
 		if err := r.createOrderItemTx(ctx, tx, &item); err != nil {
-			return nil, err
+			return nil, core_database.WriteError(err)
 		}
 	}
 
 	for _, history := range order.StatusHistory {
 		if err := r.addStatusHistoryTx(ctx, tx, &history); err != nil {
-			return nil, err
+			return nil, core_database.WriteError(err)
 		}
 	}
 
@@ -155,14 +155,14 @@ func (r *PostgresOrderRepository) CreateWithIdempotencyKey(ctx context.Context, 
 	if order.CheckoutCartID != nil {
 		tag, err := tx.Exec(ctx, `DELETE FROM carts WHERE id=$1 AND user_id=$2 AND restaurant_id=$3 AND revision=$4`, *order.CheckoutCartID, order.UserID, order.RestaurantID, order.CheckoutCartRevision)
 		if err != nil {
-			return nil, err
+			return nil, core_database.WriteError(err)
 		}
 		if tag.RowsAffected() != 1 {
 			return nil, core_errors.ErrConflict
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, core_database.WriteError(err)
 	}
 
 	return order, nil
@@ -332,27 +332,27 @@ func (r *PostgresOrderRepository) ListByRestaurantID(ctx context.Context, restau
 func (r *PostgresOrderRepository) PrepareIntegrationRetry(ctx context.Context, orderID uuid.UUID, externalID string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var current domain.OrderStatus
 	if err = tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&current); err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	if current != domain.OrderStatusIntegrationFailed {
 		return core_errors.ErrConflict
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO order_dispatch(order_id,base_url,available_at) SELECT o.id,r.integration_base_url,now()+interval '30 seconds' FROM orders o JOIN restaurants r ON r.id=o.restaurant_id WHERE o.id=$1 ON CONFLICT(order_id) DO UPDATE SET available_at=EXCLUDED.available_at`, orderID); err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	now := time.Now().UTC()
 	if _, err = tx.Exec(ctx, `UPDATE orders SET external_order_id=$2,status='pending',updated_at=$3 WHERE id=$1`, orderID, externalID, now); err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,'pending','kitchen',$2)`, orderID, now); err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
-	return tx.Commit(ctx)
+	return core_database.WriteError(tx.Commit(ctx))
 }
 
 // SaveIntegrationResult reconciles the HTTP result with callbacks under the same
@@ -363,13 +363,13 @@ func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, ord
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var current domain.OrderStatus
 	var savedExternalID *string
 	if err = tx.QueryRow(ctx, `SELECT status,external_order_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&current, &savedExternalID); err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	if savedExternalID == nil || *savedExternalID != externalID {
 		return core_errors.ErrConflict
@@ -377,18 +377,18 @@ func (r *PostgresOrderRepository) SaveIntegrationResult(ctx context.Context, ord
 	if (current == domain.OrderStatusPending || current == domain.OrderStatusIntegrationFailed) && status != current {
 		now := time.Now().UTC()
 		if _, err = tx.Exec(ctx, `UPDATE orders SET status=$2,updated_at=$3 WHERE id=$1`, orderID, status, now); err != nil {
-			return err
+			return core_database.WriteError(err)
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO order_status_history(order_id,status,source,created_at) VALUES($1,$2,$3,$4)`, orderID, status, integrationResultSource(status), now); err != nil {
-			return err
+			return core_database.WriteError(err)
 		}
 	}
 	if status != domain.OrderStatusIntegrationFailed || (current != domain.OrderStatusPending && current != domain.OrderStatusIntegrationFailed) {
 		if _, err := tx.Exec(ctx, `DELETE FROM order_dispatch WHERE order_id=$1`, orderID); err != nil {
-			return err
+			return core_database.WriteError(err)
 		}
 	}
-	return tx.Commit(ctx)
+	return core_database.WriteError(tx.Commit(ctx))
 }
 
 func integrationResultSource(status domain.OrderStatus) string {
@@ -425,7 +425,7 @@ func (r *PostgresOrderRepository) addStatusHistoryTx(ctx context.Context, tx cor
 func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, orderID uuid.UUID, status domain.OrderStatus, history *domain.OrderStatusHistory) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // rollback after commit is a harmless no-op
 
@@ -434,7 +434,7 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 	var currentStatus domain.OrderStatus
 	err = tx.QueryRow(ctx, lockQuery, orderID).Scan(&currentStatus)
 	if err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 
 	if history.OrderID != orderID || history.Status != status {
@@ -457,7 +457,7 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 			return nil
 		}
 		if !errors.Is(err, core_database.ErrNoRows) {
-			return err
+			return core_database.WriteError(err)
 		}
 	}
 
@@ -482,17 +482,17 @@ func (r *PostgresOrderRepository) UpdateStatusWithHistory(ctx context.Context, o
 		return core_errors.ErrConflict
 	}
 	if err != nil {
-		return err
+		return core_database.WriteError(err)
 	}
 
 	if !sameStateCallback {
 		if _, err := tx.Exec(ctx, `UPDATE orders SET status = $2, updated_at = $3 WHERE id = $1`,
 			orderID, status, history.CreatedAt); err != nil {
-			return err
+			return core_database.WriteError(err)
 		}
 	}
 
-	return tx.Commit(ctx)
+	return core_database.WriteError(tx.Commit(ctx))
 }
 
 func (r *PostgresOrderRepository) GetStatusHistory(ctx context.Context, orderID uuid.UUID) ([]domain.OrderStatusHistory, error) {

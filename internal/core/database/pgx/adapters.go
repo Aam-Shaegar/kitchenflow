@@ -25,6 +25,21 @@ func (r pgxRow) Scan(dest ...any) error {
 	return nil
 }
 
+func (r pgxRows) Scan(dest ...any) error {
+	err := r.Rows.Scan(dest...)
+	if err != nil {
+		return mapErrors(err)
+	}
+	return nil
+}
+func (r pgxRows) Err() error {
+	err := r.Rows.Err()
+	if err != nil {
+		return mapErrors(err)
+	}
+	return nil
+}
+
 type pgxTx struct{ pgx.Tx }
 
 func (t *pgxTx) Query(ctx context.Context, sql string, args ...any) (core_database.Rows, error) {
@@ -49,7 +64,7 @@ func (t *pgxTx) Exec(ctx context.Context, sql string, arguments ...any) (core_da
 
 func (t *pgxTx) Commit(ctx context.Context) error {
 	if err := t.Tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("commit: %w", mapErrors(err))
 	}
 	return nil
 }

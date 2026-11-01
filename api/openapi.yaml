@@ -67,6 +67,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Restaurant' }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/restaurants/{restaurant_id}:
     get:
@@ -140,6 +142,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MenuCategory' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/restaurants/{restaurant_id}/menu/items:
     post:
@@ -159,6 +163,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MenuItem' }
         '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/restaurants/{restaurant_id}/orders:
     get:
@@ -207,6 +213,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MenuItem' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
     delete:
       tags: [Restaurant Portal]
       summary: Delete menu item
@@ -215,6 +223,7 @@ paths:
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /api/v1/cart:
     get:

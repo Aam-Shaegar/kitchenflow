@@ -20,27 +20,27 @@ func NewCartRepository(pool db.Pool) *PostgresCartRepository {
 func (r *PostgresCartRepository) transact(ctx context.Context, user string, change func(db.Tx, *domain.Cart) error) (*domain.Cart, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 81508))`, user); err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	cart, err := r.read(ctx, tx, user)
 	if err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	if change != nil {
 		if err := change(tx, cart); err != nil {
-			return nil, err
+			return nil, db.WriteError(err)
 		}
 		cart, err = r.read(ctx, tx, user)
 		if err != nil {
-			return nil, err
+			return nil, db.WriteError(err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	return cart, nil
 }
@@ -51,16 +51,16 @@ func (r *PostgresCartRepository) read(ctx context.Context, tx db.Tx, user string
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	rows, err := tx.Query(ctx, `SELECT id,cart_id,menu_item_id,name,unit_price,quantity,total_price,created_at,updated_at FROM cart_items WHERE cart_id=$1 ORDER BY id`, c.ID)
 	if err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	defer rows.Close()
 	c.Items, err = r.scanCartItems(rows)
 	if err != nil {
-		return nil, err
+		return nil, db.WriteError(err)
 	}
 	c.TotalAmount = c.CalculateTotal()
 	return &c, nil
@@ -156,7 +156,7 @@ func (r *PostgresCartRepository) scanCartItems(rows db.Rows) ([]domain.CartItem,
 	for rows.Next() {
 		var item domain.CartItem
 		if err := rows.Scan(&item.ID, &item.CartID, &item.MenuItemID, &item.Name, &item.UnitPrice, &item.Quantity, &item.TotalPrice, &item.CreatedAt, &item.UpdatedAt); err != nil {
-			return nil, err
+			return nil, db.WriteError(err)
 		}
 		items = append(items, item)
 	}

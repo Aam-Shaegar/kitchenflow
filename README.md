@@ -607,3 +607,7 @@ Recovery reuses the stored partner endpoint and immutable item IDs, prices and a
 ### Migration execution
 
 Startup reads and validates all SQL migration files before touching the database. Missing paths, directories with no SQL files and empty SQL files are errors. Pending migrations execute in filename order in one transaction, together with their schema_migrations entries. A transaction advisory lock serializes parallel API startup before the ledger is created or inspected. SQL or ledger errors roll back the whole pending batch; previously committed migrations remain applied. Restart then retries the pending batch. Migration files must support transactions and must not contain their own BEGIN/COMMIT/ROLLBACK or commands such as CREATE INDEX CONCURRENTLY. Keep applied files immutable; the ledger uses their filenames.
+
+### Database constraint responses
+
+Repository writes translate duplicate keys to HTTP 409 and missing foreign-key references to HTTP 404. Deleting a referenced category or menu item returns 409. The same rules apply to constraints deferred until commit. Database causes remain available in internal errors for diagnostics; responses omit SQL and constraint details. Unexpected database failures continue to return 500. No schema migration is needed.
