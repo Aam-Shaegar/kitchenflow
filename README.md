@@ -619,3 +619,9 @@ Creating a menu item requires an explicit integer price (0 is allowed), category
 ### Restaurant mock creation replays
 
 The mock atomically creates or retrieves an order by the required `external_order_id` (nonblank, at most 128 bytes). The first request returns 201 and alone starts automatic processing or emits a rejection callback; a matching replay returns 200 with the current saved status. Address and ordered item snapshots must match exactly; a changed payload returns 409 without modifying timestamps, items or status. Matching replays still succeed when the mock is switched to failing mode after the order was accepted. Store reads and creation results are copies, so callers cannot overwrite stored state. Deduplication lasts for the lifetime of the mock process; its in-memory store is cleared on restart.
+
+### Mock callback delivery and shutdown
+
+The mock queues status events in memory in the order accepted under its store lock. One dispatcher retries the head event until HTTP 2xx; transport errors, redirects and other HTTP statuses are not acknowledgements. Each event retains its payload and event_id across retries. Requests have a 5-second timeout; retry delays grow from 100 ms to a 5-second cap. Later events wait for the earlier acknowledgement. A persistently rejected event therefore requires fixing the receiver before the queue can progress. The queue is intentionally in memory and is lost on mock restart.
+
+Manual status commands return 400 for unknown statuses, 409 for invalid transitions and 404 for missing orders. Status change and enqueue are atomic. Server shutdown first drains HTTP handlers, then cancels and joins background processing and callback delivery, including active requests and sleeps. Store snapshots are copies.

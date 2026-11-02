@@ -22,6 +22,7 @@ func TestConcurrentCreateRunsOneProcessingSequence(t *testing.T) {
 	}))
 	defer callbacks.Close()
 	store := NewMockStore()
+	t.Cleanup(store.Close)
 	handler := handleCreateOrder(store, callbacks.URL, "restaurant", MockConfig{ProcessingDelays: []time.Duration{0, 0, 0, 0, 0}})
 	payload := `{"external_order_id":"same","delivery_address":"Test address","items":[{"external_menu_item_id":"dish","name":"Dish","unit_price":100,"quantity":1}]}`
 	var wg sync.WaitGroup
@@ -79,6 +80,7 @@ func TestConcurrentCreateRunsOneProcessingSequence(t *testing.T) {
 }
 func TestCompetingPayloadsAndStoreOwnership(t *testing.T) {
 	store := NewMockStore()
+	t.Cleanup(store.Close)
 	var wg sync.WaitGroup
 	codes := make(chan int, 2)
 	handler := handleCreateOrder(store, "", "", MockConfig{Mode: "manual"})
@@ -124,6 +126,7 @@ func TestCompetingPayloadsAndStoreOwnership(t *testing.T) {
 func TestKnownOrderReplaysDuringOutage(t *testing.T) {
 	for _, status := range []string{"confirmed", "cancelled", "delivered"} {
 		store := NewMockStore()
+		t.Cleanup(store.Close)
 		req := CreateOrderRequest{ExternalOrderID: "known", DeliveryAddress: "Address"}
 		store.CreateOrGet(req, status, true)
 		handler := handleCreateOrder(store, "", "", MockConfig{Mode: "failing"})

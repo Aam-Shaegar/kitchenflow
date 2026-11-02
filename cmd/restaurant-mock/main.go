@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	ordersdomain "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
-	"github.com/google/uuid"
 )
 
 type CreateOrderRequest struct {
@@ -54,12 +51,21 @@ type StoredOrder struct {
 }
 
 type MockStore struct {
-	mu     sync.RWMutex
-	orders map[string]*StoredOrder
+	ctx               context.Context
+	cancel            context.CancelFunc
+	tasksMu           sync.Mutex
+	tasks             sync.WaitGroup
+	closed            bool
+	events            []callbackEvent
+	wake              chan struct{}
+	dispatcherStarted bool
+	mu                sync.RWMutex
+	orders            map[string]*StoredOrder
 }
 
 func NewMockStore() *MockStore {
-	return &MockStore{orders: map[string]*StoredOrder{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &MockStore{orders: map[string]*StoredOrder{}, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1)}
 }
 
 // CreateOrGet is the only creation path. The returned flag alone grants the
@@ -170,6 +176,7 @@ func main() {
 
 	cfg := configFromEnv()
 	store := NewMockStore()
+	defer store.Close()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/restaurant/orders", handleOrders(store, callbackURL, restaurantID, cfg))
@@ -247,11 +254,10 @@ func handleOrderByID(store *MockStore, callbackURL, restaurantID string, cfg Moc
 				http.Error(w, "invalid request", http.StatusBadRequest)
 				return
 			}
-			if !store.SetStatus(id, req.Status) {
-				http.Error(w, "not found", http.StatusNotFound)
+			if code := store.NotifyStatus(callbackURL, restaurantID, id, req.Status); code != 0 {
+				http.Error(w, http.StatusText(code), code)
 				return
 			}
-			go sendCallback(callbackURL, restaurantID, id, req.Status)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -298,9 +304,9 @@ func handleCreateOrder(store *MockStore, callbackURL, restaurantID string, cfg M
 		// prevent the one newly accepted order from starting processing.
 		if created {
 			if status == "cancelled" {
-				go sendCallback(callbackURL, restaurantID, order.ExternalOrderID, status)
+				store.QueueCallback(callbackURL, restaurantID, order.ExternalOrderID, status)
 			} else if cfg.Mode != "manual" {
-				go simulateOrderProcessing(store, callbackURL, restaurantID, order.ExternalOrderID, cfg)
+				store.start(func() { simulateOrderProcessing(store, callbackURL, restaurantID, order.ExternalOrderID, cfg) })
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -320,46 +326,16 @@ func simulateOrderProcessing(store *MockStore, callbackURL, restaurantID, extern
 		if i < len(cfg.ProcessingDelays) {
 			delay = cfg.ProcessingDelays[i]
 		}
-		time.Sleep(delay)
+		if !waitFor(store.ctx, delay) {
+			return
+		}
 		if _, ok := store.Get(externalOrderID); !ok {
 			return
 		}
-		if !store.SetStatus(externalOrderID, status) {
+		if store.NotifyStatus(callbackURL, restaurantID, externalOrderID, status) != 0 {
 			return
 		}
-		sendCallback(callbackURL, restaurantID, externalOrderID, status)
 	}
-}
-
-func sendCallback(callbackURL, restaurantID, externalOrderID, status string) {
-	payload := StatusCallbackRequest{
-		ExternalOrderID: externalOrderID,
-		Status:          status,
-		EventID:         uuid.New().String(),
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("Failed to marshal callback: %v", err)
-		return
-	}
-
-	url := fmt.Sprintf("%s/api/v1/integrations/restaurants/%s/orders/status", callbackURL, restaurantID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		log.Printf("Failed to create callback request: %v", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Callback failed: %v", err)
-		return
-	}
-	resp.Body.Close()
-	log.Printf("Callback sent: order=%s status=%s response=%d", externalOrderID, status, resp.StatusCode)
 }
 
 func handleMenu(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 func TestCancellationRacesWithCooking(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		store := NewMockStore()
+		t.Cleanup(store.Close)
 		store.CreateOrGet(CreateOrderRequest{ExternalOrderID: "order"}, "confirmed", true)
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -42,6 +43,7 @@ func TestCancellationRacesWithCooking(t *testing.T) {
 }
 func TestCancelRepeatAndAutoProcessingStops(t *testing.T) {
 	store := NewMockStore()
+	t.Cleanup(store.Close)
 	store.CreateOrGet(CreateOrderRequest{ExternalOrderID: "order"}, "pending", true)
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
@@ -59,6 +61,7 @@ func TestCancelRepeatAndAutoProcessingStops(t *testing.T) {
 
 func TestCreateReplayDoesNotRestartOrder(t *testing.T) {
 	store := NewMockStore()
+	t.Cleanup(store.Close)
 	handler := handleOrders(store, "", "", MockConfig{Mode: "manual"})
 	payload := `{"external_order_id":"replay","delivery_address":"Test address","items":[]}`
 	for i := 0; i < 2; i++ {
