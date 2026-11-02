@@ -662,3 +662,9 @@ Retries reuse the event_id and payload but receive a fresh timestamp/signature e
 ### HTTP boundaries
 
 Both API and restaurant mock enforce header read timeout 5s, total request read timeout 15s, response write timeout 30s, idle keep-alive timeout 60s and maximum headers 32 KiB. Request bodies are capped at 1 MiB (413), including chunked requests; callbacks keep their stricter 64 KiB cap. JSON input must be exactly one object: trailing documents or garbage, unknown fields and explicit null fields are rejected with 400. The integration client also bounds restaurant JSON responses to 64 KiB and rejects trailing data. HMAC verification uses the original escaped request path, including /api/v1, even when routing strips that prefix.
+
+### Liveness, readiness and process exit
+
+Public `GET /api/v1/health/live` returns 200 while the HTTP process can serve requests. `GET /api/v1/health/ready` returns 200 only when the database responds, all migrations required by the deployed files are recorded and runtime tables/versioned columns are queryable. Checks have a 2-second database deadline and return a generic 503 on failure or during shutdown; they do not scan application data or call restaurant services. `/api/v1/health` is a compatibility alias for readiness. Compose uses readiness for its API healthcheck. These checks do not replace full schema validation or restaurant delivery monitoring.
+
+Binding the HTTP port happens synchronously. Startup/listener and shutdown errors propagate through the application; resources are closed before the outer main exits with code 1. Normal signal-driven shutdown exits successfully. No new migration is needed.

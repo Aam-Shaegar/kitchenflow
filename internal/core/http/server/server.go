@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 
 	core_http_middleware "github.com/Aam-Shaegar/kitchenflow/internal/core/http/middleware"
@@ -36,12 +37,20 @@ func (h *HTTPServer) Run(ctx context.Context) error {
 		Handler: mux,
 	}
 	ApplyBounds(server)
+	if ctx.Err() != nil {
+		return nil
+	}
+	listener, err := net.Listen("tcp", h.config.Addr)
+	if err != nil {
+		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	defer listener.Close()
 	ch := make(chan error, 1)
 	go func() {
 		defer close(ch)
 
 		h.log.Warn("start HTTP server", zap.String("addr", h.config.Addr))
-		err := server.ListenAndServe()
+		err := server.Serve(listener)
 
 		if !errors.Is(err, http.ErrServerClosed) {
 			ch <- err

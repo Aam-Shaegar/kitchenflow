@@ -2,6 +2,8 @@ package migrate
 
 import (
 	"context"
+	"github.com/Aam-Shaegar/kitchenflow/internal/core/health"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -51,7 +53,7 @@ func TestRunPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		q := u.Query()
-		q.Set("search_path", schema+",public")
+		q.Set("search_path", schema)
 		u.RawQuery = q.Encode()
 		pool, err := db.NewConnectionPool(db.Config{URL: u.String(), Timeout: 10 * time.Second}, ctx)
 		if err != nil {
@@ -71,6 +73,57 @@ func TestRunPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	t.Run("readiness tracks schema database and shutdown", func(t *testing.T) {
+		pool := fixture(t)
+		lifecycle, stop := context.WithCancel(ctx)
+		defer stop()
+		ready, err := health.Ready(pool, "../../../../migrations", lifecycle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert := func(want int) {
+			t.Helper()
+			w := httptest.NewRecorder()
+			ready(w, httptest.NewRequest("GET", "/health/ready", nil))
+			if w.Code != want {
+				t.Fatalf("readiness HTTP %d want %d", w.Code, want)
+			}
+		}
+		assert(503)
+		if err := Run(ctx, pool, "../../../../migrations"); err != nil {
+			t.Fatal(err)
+		}
+		assert(200)
+		if _, err := pool.Exec(ctx, `DELETE FROM schema_migrations WHERE filename='007_order_dispatch.sql'`); err != nil {
+			t.Fatal(err)
+		}
+		assert(503)
+		if _, err := pool.Exec(ctx, `INSERT INTO schema_migrations(filename) VALUES('007_order_dispatch.sql'); ALTER TABLE order_dispatch RENAME TO hidden_dispatch`); err != nil {
+			t.Fatal(err)
+		}
+		assert(503)
+		if _, err := pool.Exec(ctx, `ALTER TABLE hidden_dispatch RENAME TO order_dispatch`); err != nil {
+			t.Fatal(err)
+		}
+		assert(200)
+		stop()
+		assert(503)
+		pool.Close()
+		another, err := health.Ready(pool, "../../../../migrations", ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		another(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != 503 {
+			t.Fatal("closed database reported ready")
+		}
+		w = httptest.NewRecorder()
+		health.Live(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != 200 {
+			t.Fatal("liveness depends on DB")
+		}
+	})
 	t.Run("parallel fresh install and no-op restart", func(t *testing.T) {
 		pool := fixture(t)
 		var wg sync.WaitGroup

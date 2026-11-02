@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     Product-ready food delivery backend. Money is in minor units (kopecks, integer).
-    User identity is passed via X-User-ID (auth is fronted by gateway in production).
+    Customer identity is verified using operator-issued Bearer credentials.
 servers:
   - url: http://localhost:8080
 
@@ -20,10 +20,11 @@ paths:
   /api/v1/health:
     get:
       tags: [Restaurants]
-      summary: Health check
+      summary: Readiness check (compatibility alias)
       responses:
+        '503': { description: Database or required schema unavailable }
         '200':
-          description: Service is healthy
+          description: Database and required schema are ready
           content:
             application/json:
               schema:
@@ -32,6 +33,19 @@ paths:
                   status:
                     type: string
                     example: ok
+
+  /api/v1/health/live:
+    get:
+      summary: Process liveness independent of the database
+      responses:
+        '200': { description: HTTP process is alive }
+
+  /api/v1/health/ready:
+    get:
+      summary: Database and schema readiness
+      responses:
+        '200': { description: Ready for application requests }
+        '503': { description: Database or schema unavailable, or shutdown in progress }
 
   /api/v1/restaurants:
     get:

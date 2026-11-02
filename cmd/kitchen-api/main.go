@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/callbackauth"
+	"github.com/Aam-Shaegar/kitchenflow/internal/core/health"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,15 +44,20 @@ import (
 )
 
 func main() {
-	auth, err := core_http_middleware.LoadAuth(os.Getenv("AUTH_CREDENTIALS_FILE"))
-	if err != nil {
+	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func run() error {
+	auth, err := core_http_middleware.LoadAuth(os.Getenv("AUTH_CREDENTIALS_FILE"))
+	if err != nil {
+		return err
+	}
 	callbackKeys, err := callbackauth.Load(os.Getenv("CALLBACK_KEYS_FILE"))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 	cfg := core_config.NewConfigMust()
 	time.Local = cfg.TimeZone
@@ -66,8 +72,7 @@ func main() {
 
 	logger, err := core_logger.NewLogger(core_logger.NewConfigMust())
 	if err != nil {
-		fmt.Println("failed to init application logger:", err)
-		os.Exit(1)
+		return fmt.Errorf("init application logger: %w", err)
 	}
 	defer logger.Close()
 
@@ -76,7 +81,7 @@ func main() {
 	logger.Debug("initializing postgres connection pool")
 	pool, err := core_pgx_pool.NewConnectionPool(core_pgx_pool.NewConfigMust(), ctx)
 	if err != nil {
-		logger.Fatal("failed to init postgres connection pool", zap.Error(err))
+		return fmt.Errorf("failed to init postgres connection pool: %w", err)
 	}
 	defer pool.Close()
 
@@ -89,7 +94,7 @@ func main() {
 	}
 	logger.Debug("running database migrations", zap.String("dir", migrationsDir))
 	if err := core_migrate.Run(ctx, pool, migrationsDir); err != nil {
-		logger.Fatal("failed to run migrations", zap.Error(err))
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	restaurantsRepo := restaurants_repository.NewRestaurantRepository(pool)
@@ -106,7 +111,7 @@ func main() {
 		strings.FieldsFunc(os.Getenv("RESTAURANT_ALLOWED_PRIVATE_CIDRS"), func(r rune) bool { return r == ',' }),
 	)
 	if err != nil {
-		logger.Fatal("invalid restaurant integration configuration", zap.Error(err))
+		return fmt.Errorf("invalid restaurant integration configuration: %w", err)
 	}
 
 	ordersSvc := orders_service.NewOrderService(
@@ -142,16 +147,15 @@ func main() {
 
 	apiRouter := core_http_server.NewAPIVersionRouter(core_http_server.ApiVersion1)
 
-	healthHandler := func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
-			logger.Error("Failed to write health response", zap.Error(err))
-		}
+	ready, err := health.Ready(pool, migrationsDir, ctx)
+	if err != nil {
+		return fmt.Errorf("initialize readiness: %w", err)
 	}
 
 	apiRouter.RegisterRoutes(
-		core_http_server.NewRoute(http.MethodGet, "/health", healthHandler),
+		core_http_server.NewRoute(http.MethodGet, "/health", ready),
+		core_http_server.NewRoute(http.MethodGet, "/health/live", health.Live),
+		core_http_server.NewRoute(http.MethodGet, "/health/ready", ready),
 		core_http_server.NewRoute(http.MethodGet, "/restaurants", restaurantsHandler.ListRestaurants),
 		core_http_server.NewRoute(http.MethodPost, "/restaurants", restaurantsHandler.CreateRestaurant, auth.Admin()),
 		core_http_server.NewRoute(http.MethodGet, "/restaurants/{restaurant_id}", restaurantsHandler.GetRestaurant),
@@ -224,8 +228,9 @@ func main() {
 	httpServer.RegisterAPIRouters(apiRouter)
 
 	if err := httpServer.Run(ctx); err != nil {
-		logger.Error("HTTP server run error", zap.Error(err))
+		return fmt.Errorf("HTTP server: %w", err)
 	}
 
 	logger.Debug("shutdown complete")
+	return nil
 }
