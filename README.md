@@ -639,6 +639,22 @@ export AUTH_CREDENTIALS_FILE=./secrets/kitchenflow-auth.json
 
 Each command prints a new random token once. Keep it private and send `Authorization: Bearer <token>` over HTTPS. The local registry contains only SHA-256 hashes and expires_at; it is excluded from Git. The API refuses to start without a valid registry. Compose mounts the file read-only. Issue credentials before `docker compose up`.
 
-This is an operator-issued personal/API credential model, without public signup or password login. Subject is the stable customer identity; X-User-ID is ignored. User tokens can access only their own cart/orders. Partner tokens manage only explicitly listed restaurant UUIDs, including ownership lookup for menu-item mutation and incoming orders. Only admins create restaurants; admins cannot impersonate customer accounts. Catalog GETs and health remain public. Callback authentication is tracked separately (KF-17).
+This is an operator-issued personal/API credential model, without public signup or password login. Subject is the stable customer identity; X-User-ID is ignored. User tokens can access only their own cart/orders. Partner tokens manage only explicitly listed restaurant UUIDs, including ownership lookup for menu-item mutation and incoming orders. Only admins create restaurants; admins cannot impersonate customer accounts. Catalog GETs and health remain public. Callbacks require the dedicated HMAC keys described below.
 
 Missing/invalid/expired tokens return 401; authenticated but disallowed roles or restaurants return 403. Rotate by issuing a replacement and removing the old hash; restart API instances to load revocations. Tokens default to 30 days (configurable up to 365). Protect the registry from untrusted writes. For E2E, set TEST_USER_TOKEN to a user credential.
+
+### Signed restaurant callbacks
+
+Issue the demo key before startup:
+
+```bash
+python3 scripts/issue-callback-key.py --restaurant 550e8400-e29b-41d4-a716-446655440000 --key-id demo-1
+export CALLBACK_KEYS_FILE=./secrets/callback-keys.json
+export CALLBACK_KEY_ID=demo-1 # mock sender only
+```
+
+The API requires CALLBACK_KEYS_FILE; the mock additionally requires CALLBACK_KEY_ID matching RESTAURANT_ID. The issuer writes a random 32-byte secret into an ignored local file with permissions 0600 and prints only its ID. Compose mounts that file read-only. In deployments with several partners, give each sender only its own key, not the API's complete key registry. Use HTTPS and protect these shared secrets from untrusted reads/writes.
+
+Requests carry X-Callback-Key-ID, X-Callback-Timestamp (Unix seconds) and X-Callback-Signature (hex HMAC-SHA256). Sign UTF-8 `v1\n{timestamp}\nPOST\n{escaped URL path}\n{hex SHA256 of exact body bytes}` without a final newline. The key registry binds each key ID to exactly one restaurant UUID and an expiry. Signatures are compared in constant time. Requests older than five minutes or over one minute in the future, missing/invalid signatures, wrong restaurant and expired keys return 401; callback bodies over 64 KiB return 413. User/partner Bearer tokens do not replace the signature.
+
+Retries reuse the event_id and payload but receive a fresh timestamp/signature each attempt. Valid replays within the window are safe through the existing atomic event_id deduplication. For rotation: add a new key ID, restart receivers accepting old and new keys, switch/restart the sender with the new ID, then remove the old key and restart receivers after in-flight requests have drained. No database migration is required.

@@ -24,6 +24,7 @@ services:
     ports:
       - "8080:8080"
     environment:
+      CALLBACK_KEYS_FILE: /run/secrets/callback-keys.json
       AUTH_CREDENTIALS_FILE: /run/secrets/kitchenflow-auth.json
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/kitchen?sslmode=disable
       DB_TIMEOUT: 10s
@@ -36,6 +37,7 @@ services:
       RESTAURANT_ALLOWED_PRIVATE_CIDRS: 172.16.0.0/12
       MIGRATIONS_DIR: /app/migrations
     volumes:
+      - ${CALLBACK_KEYS_FILE:-./secrets/callback-keys.json}:/run/secrets/callback-keys.json:ro
       - ${AUTH_CREDENTIALS_FILE:-./secrets/kitchenflow-auth.json}:/run/secrets/kitchenflow-auth.json:ro
     depends_on:
       postgres:
@@ -56,10 +58,14 @@ services:
       - "8081:8081"
     environment:
       PORT: 8081
+      CALLBACK_KEYS_FILE: /run/secrets/callback-keys.json
+      CALLBACK_KEY_ID: ${CALLBACK_KEY_ID:-demo-1}
       KITCHEN_CALLBACK_URL: http://kitchen-api:8080
       RESTAURANT_ID: 550e8400-e29b-41d4-a716-446655440000
       MOCK_MODE: auto
       MOCK_DELAYS: 2s,2s,2s,2s,2s
+    volumes:
+      - ${CALLBACK_KEYS_FILE:-./secrets/callback-keys.json}:/run/secrets/callback-keys.json:ro
     depends_on:
       kitchen-api:
         condition: service_healthy

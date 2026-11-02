@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/Aam-Shaegar/kitchenflow/internal/core/callbackauth"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +44,11 @@ import (
 
 func main() {
 	auth, err := core_http_middleware.LoadAuth(os.Getenv("AUTH_CREDENTIALS_FILE"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	callbackKeys, err := callbackauth.Load(os.Getenv("CALLBACK_KEYS_FILE"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -202,7 +208,7 @@ func main() {
 			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/orders/{order_id}/retry", ordersHandler.RetryOrder,
 			auth.User()),
-		core_http_server.NewRoute(http.MethodPost, "/integrations/restaurants/{restaurant_id}/orders/status", integrationHandler.RestaurantCallback),
+		core_http_server.NewRoute(http.MethodPost, "/integrations/restaurants/{restaurant_id}/orders/status", integrationHandler.RestaurantCallback, callbackKeys.Middleware),
 	)
 
 	logger.Debug("initializing http server")

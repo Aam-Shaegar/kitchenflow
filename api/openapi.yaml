@@ -438,9 +438,13 @@ paths:
   /api/v1/integrations/restaurants/{restaurant_id}/orders/status:
     post:
       tags: [Restaurant Integration]
+      description: HMAC-SHA256 signature required; see README signed restaurant callbacks. Keys are restaurant-scoped, expire, and support overlapping rotation.
       summary: Restaurant callback for order status (idempotent via event_id)
       parameters:
         - $ref: '#/components/parameters/RestaurantID'
+        - { name: X-Callback-Key-ID, in: header, required: true, schema: { type: string } }
+        - { name: X-Callback-Timestamp, in: header, required: true, schema: { type: string } }
+        - { name: X-Callback-Signature, in: header, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
@@ -448,6 +452,8 @@ paths:
             schema:
               $ref: '#/components/schemas/RestaurantOrderStatusCallback'
       responses:
+        '401': { description: Missing, invalid, expired or wrong-restaurant signature }
+        '413': { description: Callback body exceeds 64 KiB }
         '204': { description: Status accepted }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }

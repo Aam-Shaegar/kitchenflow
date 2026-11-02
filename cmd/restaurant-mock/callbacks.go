@@ -115,6 +115,9 @@ func (s *MockStore) deliverCallbacks() {
 				return
 			}
 			req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, event.url, bytes.NewReader(body))
+			if err == nil && s.signCallback != nil {
+				err = s.signCallback(req, body)
+			}
 			if err == nil {
 				req.Header.Set("Content-Type", "application/json")
 				var resp *http.Response

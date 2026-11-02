@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/Aam-Shaegar/kitchenflow/internal/core/callbackauth"
+	"github.com/google/uuid"
 	"log"
 	"net/http"
 	"os"
@@ -51,6 +53,7 @@ type StoredOrder struct {
 }
 
 type MockStore struct {
+	signCallback      func(*http.Request, []byte) error
 	ctx               context.Context
 	cancel            context.CancelFunc
 	tasksMu           sync.Mutex
@@ -174,8 +177,21 @@ func main() {
 		restaurantID = envID
 	}
 
+	keys, err := callbackauth.Load(os.Getenv("CALLBACK_KEYS_FILE"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	rid, err := uuid.Parse(restaurantID)
+	if err != nil {
+		log.Fatal("invalid RESTAURANT_ID")
+	}
+	signer, err := keys.Signer(os.Getenv("CALLBACK_KEY_ID"), rid)
+	if err != nil {
+		log.Fatal(err)
+	}
 	cfg := configFromEnv()
 	store := NewMockStore()
+	store.signCallback = signer
 	defer store.Close()
 
 	mux := http.NewServeMux()
