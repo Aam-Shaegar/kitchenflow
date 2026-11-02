@@ -24,6 +24,7 @@ services:
     ports:
       - "8080:8080"
     environment:
+      AUTH_CREDENTIALS_FILE: /run/secrets/kitchenflow-auth.json
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/kitchen?sslmode=disable
       DB_TIMEOUT: 10s
       SERVER_ADDR: :8080
@@ -34,6 +35,8 @@ services:
       RESTAURANT_ALLOWED_ORIGINS: http://restaurant-mock:8081
       RESTAURANT_ALLOWED_PRIVATE_CIDRS: 172.16.0.0/12
       MIGRATIONS_DIR: /app/migrations
+    volumes:
+      - ${AUTH_CREDENTIALS_FILE:-./secrets/kitchenflow-auth.json}:/run/secrets/kitchenflow-auth.json:ro
     depends_on:
       postgres:
         condition: service_healthy

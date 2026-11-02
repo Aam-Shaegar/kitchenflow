@@ -26,3 +26,5 @@ coverage.html
 # Logs
 logs/
 *.log
+# Local authentication registry
+secrets/

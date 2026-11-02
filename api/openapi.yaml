@@ -53,6 +53,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Restaurant' }
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Onboard a restaurant (closed partner API)
       requestBody:
@@ -84,6 +85,7 @@ paths:
               schema: { $ref: '#/components/schemas/Restaurant' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Update restaurant (open/close, contacts)
       parameters:
@@ -122,6 +124,7 @@ paths:
 
   /api/v1/restaurants/{restaurant_id}/menu/categories:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Create menu category
       parameters:
@@ -147,6 +150,7 @@ paths:
 
   /api/v1/restaurants/{restaurant_id}/menu/items:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Create menu item (price in kopecks)
       parameters:
@@ -168,6 +172,7 @@ paths:
 
   /api/v1/restaurants/{restaurant_id}/orders:
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: List incoming orders for a restaurant
       parameters:
@@ -197,6 +202,7 @@ paths:
               schema: { $ref: '#/components/schemas/MenuItem' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Update menu item (price in kopecks)
       parameters:
@@ -216,6 +222,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
 
     delete:
+      security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
       summary: Delete menu item
       parameters:
@@ -227,10 +234,9 @@ paths:
 
   /api/v1/cart:
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Cart]
       summary: Get current user's cart (single active cart)
-      parameters:
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Cart
@@ -239,19 +245,17 @@ paths:
               schema: { $ref: '#/components/schemas/Cart' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
+      security: [{ BearerAuth: [] }]
       tags: [Cart]
       summary: Clear cart
-      parameters:
-        - $ref: '#/components/parameters/UserID'
       responses:
         '204': { description: Cleared }
 
   /api/v1/cart/items:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Cart]
       summary: Add item to cart (one restaurant per cart)
-      parameters:
-        - $ref: '#/components/parameters/UserID'
       requestBody:
         required: true
         content:
@@ -269,10 +273,10 @@ paths:
 
   /api/v1/cart/items/{cart_item_id}:
     patch:
+      security: [{ BearerAuth: [] }]
       tags: [Cart]
       summary: Change cart item quantity
       parameters:
-        - $ref: '#/components/parameters/UserID'
         - name: cart_item_id
           in: path
           required: true
@@ -295,10 +299,10 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '400': { $ref: '#/components/responses/ValidationError' }
     delete:
+      security: [{ BearerAuth: [] }]
       tags: [Cart]
       summary: Remove cart item
       parameters:
-        - $ref: '#/components/parameters/UserID'
         - name: cart_item_id
           in: path
           required: true
@@ -309,10 +313,10 @@ paths:
 
   /api/v1/orders:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Create order from current cart
       parameters:
-        - $ref: '#/components/parameters/UserID'
         - name: Idempotency-Key
           in: header
           required: true
@@ -333,10 +337,10 @@ paths:
         '503': { description: Restaurant integration is missing or not approved by the operator }
         '400': { $ref: '#/components/responses/ValidationError' }
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: List user's orders
       parameters:
-        - $ref: '#/components/parameters/UserID'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -350,11 +354,11 @@ paths:
 
   /api/v1/orders/{order_id}:
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Get order
       parameters:
         - $ref: '#/components/parameters/OrderID'
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Order
@@ -365,11 +369,11 @@ paths:
 
   /api/v1/orders/{order_id}/status:
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Get order status
       parameters:
         - $ref: '#/components/parameters/OrderID'
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Current order status
@@ -384,11 +388,11 @@ paths:
 
   /api/v1/orders/{order_id}/history:
     get:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Get order status history
       parameters:
         - $ref: '#/components/parameters/OrderID'
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Status history
@@ -400,11 +404,11 @@ paths:
 
   /api/v1/orders/{order_id}/cancel:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Cancel order with restaurant confirmation (pending/confirmed only)
       parameters:
         - $ref: '#/components/parameters/OrderID'
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Cancelled order
@@ -417,11 +421,11 @@ paths:
 
   /api/v1/orders/{order_id}/retry:
     post:
+      security: [{ BearerAuth: [] }]
       tags: [Orders]
       summary: Retry restaurant integration for integration_failed orders
       parameters:
         - $ref: '#/components/parameters/OrderID'
-        - $ref: '#/components/parameters/UserID'
       responses:
         '200':
           description: Order after retry
@@ -449,6 +453,10 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
   parameters:
     RestaurantID:
       name: restaurant_id
@@ -465,11 +473,6 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
-    UserID:
-      name: X-User-ID
-      in: header
-      required: true
-      schema: { type: string, minLength: 1, maxLength: 128 }
     Limit:
       name: limit
       in: query

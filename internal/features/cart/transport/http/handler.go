@@ -1,6 +1,7 @@
 package handler
 
 import (
+	auth "github.com/Aam-Shaegar/kitchenflow/internal/core/http/middleware"
 	"net/http"
 
 	core_errors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
@@ -33,9 +34,9 @@ func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -53,9 +54,9 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -91,9 +92,9 @@ func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -123,9 +124,9 @@ func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -148,9 +149,9 @@ func (h *CartHandler) ClearCart(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 	if err := h.svc.ClearCart(ctx, userID); err != nil {

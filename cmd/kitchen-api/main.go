@@ -36,10 +36,17 @@ import (
 	integrations_http "github.com/Aam-Shaegar/kitchenflow/internal/features/integrations/restaurant/http"
 	integrations_handler "github.com/Aam-Shaegar/kitchenflow/internal/features/integrations/restaurant/transport/http"
 
+	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 func main() {
+	auth, err := core_http_middleware.LoadAuth(os.Getenv("AUTH_CREDENTIALS_FILE"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	cfg := core_config.NewConfigMust()
 	time.Local = cfg.TimeZone
 
@@ -140,41 +147,61 @@ func main() {
 	apiRouter.RegisterRoutes(
 		core_http_server.NewRoute(http.MethodGet, "/health", healthHandler),
 		core_http_server.NewRoute(http.MethodGet, "/restaurants", restaurantsHandler.ListRestaurants),
-		core_http_server.NewRoute(http.MethodPost, "/restaurants", restaurantsHandler.CreateRestaurant),
+		core_http_server.NewRoute(http.MethodPost, "/restaurants", restaurantsHandler.CreateRestaurant, auth.Admin()),
 		core_http_server.NewRoute(http.MethodGet, "/restaurants/{restaurant_id}", restaurantsHandler.GetRestaurant),
-		core_http_server.NewRoute(http.MethodPatch, "/restaurants/{restaurant_id}", restaurantsHandler.UpdateRestaurant),
+		core_http_server.NewRoute(http.MethodPatch, "/restaurants/{restaurant_id}", restaurantsHandler.UpdateRestaurant, auth.Restaurant(core_http_middleware.RestaurantPath)),
 		core_http_server.NewRoute(http.MethodGet, "/restaurants/{restaurant_id}/menu", menuHandler.GetMenu),
-		core_http_server.NewRoute(http.MethodPost, "/restaurants/{restaurant_id}/menu/categories", menuHandler.CreateCategory),
-		core_http_server.NewRoute(http.MethodPost, "/restaurants/{restaurant_id}/menu/items", menuHandler.CreateItem),
-		core_http_server.NewRoute(http.MethodGet, "/restaurants/{restaurant_id}/orders", ordersHandler.ListRestaurantOrders),
+		core_http_server.NewRoute(http.MethodPost, "/restaurants/{restaurant_id}/menu/categories", menuHandler.CreateCategory, auth.Restaurant(core_http_middleware.RestaurantPath)),
+		core_http_server.NewRoute(http.MethodPost, "/restaurants/{restaurant_id}/menu/items", menuHandler.CreateItem, auth.Restaurant(core_http_middleware.RestaurantPath)),
+		core_http_server.NewRoute(http.MethodGet, "/restaurants/{restaurant_id}/orders", ordersHandler.ListRestaurantOrders, auth.Restaurant(core_http_middleware.RestaurantPath)),
 		core_http_server.NewRoute(http.MethodGet, "/menu-items/{menu_item_id}", menuHandler.GetMenuItem),
-		core_http_server.NewRoute(http.MethodPatch, "/menu-items/{menu_item_id}", menuHandler.UpdateItem),
-		core_http_server.NewRoute(http.MethodDelete, "/menu-items/{menu_item_id}", menuHandler.DeleteItem),
+		core_http_server.NewRoute(http.MethodPatch, "/menu-items/{menu_item_id}", menuHandler.UpdateItem, auth.Restaurant(func(r *http.Request) (uuid.UUID, error) {
+			id, err := uuid.Parse(r.PathValue("menu_item_id"))
+			if err != nil {
+				return uuid.Nil, coreerrors.ErrInvalidArgument
+			}
+			item, err := menuSvc.GetItemByID(r.Context(), id)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			return item.RestaurantID, nil
+		})),
+		core_http_server.NewRoute(http.MethodDelete, "/menu-items/{menu_item_id}", menuHandler.DeleteItem, auth.Restaurant(func(r *http.Request) (uuid.UUID, error) {
+			id, err := uuid.Parse(r.PathValue("menu_item_id"))
+			if err != nil {
+				return uuid.Nil, coreerrors.ErrInvalidArgument
+			}
+			item, err := menuSvc.GetItemByID(r.Context(), id)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			return item.RestaurantID, nil
+		})),
 		core_http_server.NewRoute(http.MethodGet, "/cart", cartHandler.GetCart,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/cart/items", cartHandler.AddItem,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPatch, "/cart/items/{cart_item_id}", cartHandler.UpdateItem,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodDelete, "/cart/items/{cart_item_id}", cartHandler.RemoveItem,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodDelete, "/cart", cartHandler.ClearCart,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/orders", ordersHandler.CreateOrder,
-			core_http_middleware.RequireHeader("X-User-ID"),
+			auth.User(),
 			core_http_middleware.RequireHeader("Idempotency-Key")),
 		core_http_server.NewRoute(http.MethodGet, "/orders", ordersHandler.GetOrders,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodGet, "/orders/{order_id}", ordersHandler.GetOrder,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodGet, "/orders/{order_id}/status", ordersHandler.GetOrderStatus,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodGet, "/orders/{order_id}/history", ordersHandler.GetOrderHistory,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/orders/{order_id}/cancel", ordersHandler.CancelOrder,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/orders/{order_id}/retry", ordersHandler.RetryOrder,
-			core_http_middleware.RequireHeader("X-User-ID")),
+			auth.User()),
 		core_http_server.NewRoute(http.MethodPost, "/integrations/restaurants/{restaurant_id}/orders/status", integrationHandler.RestaurantCallback),
 	)
 

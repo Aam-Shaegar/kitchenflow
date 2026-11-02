@@ -431,10 +431,10 @@ RID=550e8400-e29b-41d4-a716-446655440000
 ITEM=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1
 curl -s http://localhost:8080/api/v1/restaurants | head -c 200
 curl -s -X POST http://localhost:8080/api/v1/cart/items \
-  -H 'Content-Type: application/json' -H 'X-User-ID: demo' \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TEST_USER_TOKEN" \
   -d "{\"restaurant_id\":\"$RID\",\"menu_item_id\":\"$ITEM\",\"quantity\":1}"
 curl -s -X POST http://localhost:8080/api/v1/orders \
-  -H 'Content-Type: application/json' -H 'X-User-ID: demo' -H 'Idempotency-Key: demo-1' \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TEST_USER_TOKEN" -H 'Idempotency-Key: demo-1' \
   -d '{"delivery_address":"Moscow, Tverskaya 1"}'
 ```
 
@@ -487,11 +487,11 @@ Key configuration packages:
 - Add retry logic with exponential backoff
 - Implement circuit breaker for restaurant service
 
-### No Authentication
+### Operator-issued authentication
 
-**Decision**: No JWT/OAuth authentication. User identity passed via `X-User-ID` header.
+**Decision**: Personal/API Bearer tokens verified against an operator-owned registry of hashes, roles, restaurant scopes and expiry. Customer identity comes from authenticated subject.
 
-**Rationale**: The current MVP scope excludes authentication. Focus on core business logic.
+**Rationale**: Explicit provisioning and scoped permissions support this backend without a public signup service; credential rotation and revocation require registry update and API restart.
 
 ### No Redis/Caching
 
@@ -625,3 +625,20 @@ The mock atomically creates or retrieves an order by the required `external_orde
 The mock queues status events in memory in the order accepted under its store lock. One dispatcher retries the head event until HTTP 2xx; transport errors, redirects and other HTTP statuses are not acknowledgements. Each event retains its payload and event_id across retries. Requests have a 5-second timeout; retry delays grow from 100 ms to a 5-second cap. Later events wait for the earlier acknowledgement. A persistently rejected event therefore requires fixing the receiver before the queue can progress. The queue is intentionally in memory and is lost on mock restart.
 
 Manual status commands return 400 for unknown statuses, 409 for invalid transitions and 404 for missing orders. Status change and enqueue are atomic. Server shutdown first drains HTTP handlers, then cancels and joins background processing and callback delivery, including active requests and sleeps. Store snapshots are copies.
+
+### Authentication and partner access
+
+Before starting the API, issue credentials locally (Python 3 required):
+
+```bash
+python3 scripts/issue-token.py --subject customer-1 --role user
+python3 scripts/issue-token.py --subject partner-1 --role partner --restaurant 550e8400-e29b-41d4-a716-446655440000
+python3 scripts/issue-token.py --subject operator-1 --role admin
+export AUTH_CREDENTIALS_FILE=./secrets/kitchenflow-auth.json
+```
+
+Each command prints a new random token once. Keep it private and send `Authorization: Bearer <token>` over HTTPS. The local registry contains only SHA-256 hashes and expires_at; it is excluded from Git. The API refuses to start without a valid registry. Compose mounts the file read-only. Issue credentials before `docker compose up`.
+
+This is an operator-issued personal/API credential model, without public signup or password login. Subject is the stable customer identity; X-User-ID is ignored. User tokens can access only their own cart/orders. Partner tokens manage only explicitly listed restaurant UUIDs, including ownership lookup for menu-item mutation and incoming orders. Only admins create restaurants; admins cannot impersonate customer accounts. Catalog GETs and health remain public. Callback authentication is tracked separately (KF-17).
+
+Missing/invalid/expired tokens return 401; authenticated but disallowed roles or restaurants return 403. Rotate by issuing a replacement and removing the old hash; restart API instances to load revocations. Tokens default to 30 days (configurable up to 365). Protect the registry from untrusted writes. For E2E, set TEST_USER_TOKEN to a user credential.

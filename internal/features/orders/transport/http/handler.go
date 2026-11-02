@@ -1,6 +1,7 @@
 package handler
 
 import (
+	auth "github.com/Aam-Shaegar/kitchenflow/internal/core/http/middleware"
 	"net/http"
 	"strconv"
 
@@ -28,9 +29,9 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -60,9 +61,9 @@ func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -86,9 +87,9 @@ func (h *OrderHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -107,9 +108,9 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 
@@ -133,9 +134,9 @@ func (h *OrderHandler) GetOrderHistory(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 	id, err := core_http_request.ParseUUID(r.PathValue("order_id"))
@@ -156,9 +157,9 @@ func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 	id, err := core_http_request.ParseUUID(r.PathValue("order_id"))
@@ -179,9 +180,9 @@ func (h *OrderHandler) RetryOrder(w http.ResponseWriter, r *http.Request) {
 	log := core_logger.FromContext(ctx)
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
-	userID := r.Header.Get("X-User-ID")
+	userID := auth.Subject(r.Context())
 	if userID == "" {
-		handler.ErrorResponse(core_errors.ErrInvalidArgument, "missing X-User-ID header")
+		handler.ErrorResponse(core_errors.ErrInvalidArgument, "authentication required")
 		return
 	}
 	id, err := core_http_request.ParseUUID(r.PathValue("order_id"))
