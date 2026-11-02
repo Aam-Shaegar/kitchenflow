@@ -14,6 +14,7 @@ import (
 	"time"
 
 	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
+	request "github.com/Aam-Shaegar/kitchenflow/internal/core/http/request"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/integrations/restaurant/domain"
 )
 
@@ -197,7 +198,7 @@ func (c *HTTPClient) post(ctx context.Context, baseURL, path string, req any) (*
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 	var result domain.CreateOrderResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := request.DecodeJSON(resp.Body, &result, 64*1024); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &result, nil

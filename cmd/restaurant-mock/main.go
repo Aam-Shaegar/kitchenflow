@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/callbackauth"
+	request "github.com/Aam-Shaegar/kitchenflow/internal/core/http/request"
+	serverbounds "github.com/Aam-Shaegar/kitchenflow/internal/core/http/server"
 	"github.com/google/uuid"
 	"log"
 	"net/http"
@@ -206,6 +208,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	serverbounds.ApplyBounds(server)
 	go func() {
 		log.Printf("Restaurant mock starting on port %s mode=%s restaurant=%s", port, cfg.Mode, restaurantID)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -266,8 +269,8 @@ func handleOrderByID(store *MockStore, callbackURL, restaurantID string, cfg Moc
 			var req struct {
 				Status string `json:"status"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "invalid request", http.StatusBadRequest)
+			if err := request.DecodeObject(r, &req); err != nil {
+				http.Error(w, "invalid request", request.JSONErrorStatus(err))
 				return
 			}
 			if code := store.NotifyStatus(callbackURL, restaurantID, id, req.Status); code != 0 {
@@ -294,8 +297,8 @@ func handleOrderByID(store *MockStore, callbackURL, restaurantID string, cfg Moc
 func handleCreateOrder(store *MockStore, callbackURL, restaurantID string, cfg MockConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req CreateOrderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
+		if err := request.DecodeObject(r, &req); err != nil {
+			http.Error(w, "invalid request", request.JSONErrorStatus(err))
 			return
 		}
 		if strings.TrimSpace(req.DeliveryAddress) == "" {
@@ -386,7 +389,11 @@ func handleCancel(store *MockStore) http.HandlerFunc {
 		var req struct {
 			ExternalOrderID string `json:"external_order_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ExternalOrderID == "" {
+		if err := request.DecodeObject(r, &req); err != nil {
+			http.Error(w, "invalid request", request.JSONErrorStatus(err))
+			return
+		}
+		if req.ExternalOrderID == "" {
 			http.Error(w, "invalid request", 400)
 			return
 		}

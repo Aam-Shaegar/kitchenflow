@@ -36,6 +36,9 @@ func (h *HTTPResponseHandler) ErrorResponse(err error, msg string) {
 	)
 
 	switch {
+	case errors.Is(err, core_error.ErrRequestTooLarge):
+		statusCode = http.StatusRequestEntityTooLarge
+		logFunc = h.log.Warn
 	case errors.Is(err, core_error.ErrIntegrationUnavailable):
 		statusCode = http.StatusServiceUnavailable
 		msg = "restaurant integration unavailable"

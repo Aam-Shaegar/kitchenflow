@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -114,8 +115,17 @@ func (k *Keys) Middleware(next http.Handler) http.Handler {
 			deny(413)
 			return
 		}
+		originalPath := r.URL.EscapedPath()
+		if r.RequestURI != "" {
+			original, parseErr := url.ParseRequestURI(r.RequestURI)
+			if parseErr != nil {
+				deny(401)
+				return
+			}
+			originalPath = original.EscapedPath()
+		}
 		provided, err := hex.DecodeString(r.Header.Get("X-Callback-Signature"))
-		expected, _ := hex.DecodeString(signature(entry.secret, timestamp, r.Method, r.URL.EscapedPath(), body))
+		expected, _ := hex.DecodeString(signature(entry.secret, timestamp, r.Method, originalPath, body))
 		if err != nil || !hmac.Equal(provided, expected) {
 			deny(401)
 			return

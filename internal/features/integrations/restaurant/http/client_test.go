@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -166,6 +167,20 @@ func TestCancelOrderHTTPContract(t *testing.T) {
 			}
 		} else if err == nil {
 			t.Fatal("accepted failure response")
+		}
+		server.Close()
+	}
+}
+
+func TestPartnerResponseBoundaries(t *testing.T) {
+	for _, body := range []string{`{"external_order_id":"order","status":"confirmed"} {}`, `{"external_order_id":"order","status":"confirmed"} garbage`, `{"external_order_id":"` + strings.Repeat("x", 70*1024) + `","status":"confirmed"}`} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
+		c, err := NewHTTPClient(time.Second, []string{server.URL}, []string{"127.0.0.0/8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.CreateOrder(context.Background(), server.URL, domain.CreateOrderRequest{}); err == nil {
+			t.Fatal("invalid/oversized response accepted")
 		}
 		server.Close()
 	}

@@ -35,6 +35,7 @@ func (h *HTTPServer) Run(ctx context.Context) error {
 		Addr:    h.config.Addr,
 		Handler: mux,
 	}
+	ApplyBounds(server)
 	ch := make(chan error, 1)
 	go func() {
 		defer close(ch)

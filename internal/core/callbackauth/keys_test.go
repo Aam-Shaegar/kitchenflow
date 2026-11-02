@@ -109,3 +109,23 @@ func TestSignedCallbacksAndRotation(t *testing.T) {
 		t.Fatal("signer bound to wrong restaurant")
 	}
 }
+
+func TestSignatureSurvivesAPIPrefixStripping(t *testing.T) {
+	rid := uuid.New()
+	secret := []byte(strings.Repeat("k", 32))
+	keys := &Keys{keys: map[string]key{"test": {Restaurant: rid, Expires: time.Now().Add(time.Hour), secret: secret}}}
+	body := []byte(`{"event_id":"same"}`)
+	path := "/api/v1/integrations/restaurants/" + rid.String() + "/orders/status"
+	req := httptest.NewRequest("POST", path, strings.NewReader(string(body)))
+	sign, _ := keys.Signer("test", rid)
+	_ = sign(req, body)
+	inner := http.NewServeMux()
+	inner.Handle("POST /integrations/restaurants/{restaurant_id}/orders/status", keys.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })))
+	outer := http.NewServeMux()
+	outer.Handle("/api/v1/", http.StripPrefix("/api/v1", inner))
+	rw := httptest.NewRecorder()
+	outer.ServeHTTP(rw, req)
+	if rw.Code != 204 {
+		t.Fatalf("signed API callback HTTP %d", rw.Code)
+	}
+}

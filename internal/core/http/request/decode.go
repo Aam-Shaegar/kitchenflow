@@ -1,7 +1,6 @@
 package core_http_request
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -29,8 +28,8 @@ type validatable interface {
 }
 
 func DecodeAndValidateRequest(r *http.Request, dest any) error {
-	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
-		return fmt.Errorf("decode json: %w", core_error.ErrInvalidArgument)
+	if err := DecodeObject(r, dest); err != nil {
+		return err
 	}
 
 	v, ok := dest.(validatable)
