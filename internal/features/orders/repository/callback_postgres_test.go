@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	integrationhttp "github.com/Aam-Shaegar/kitchenflow/internal/features/integrations/restaurant/http"
 	ordersservice "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/service"
 	"net/http"
@@ -169,6 +170,131 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 		}
 		if duplicate.Items[0].ExternalMenuItemID != "partner-original" {
 			t.Fatal("transactional read lost partner ID")
+		}
+	})
+	t.Run("batched page ordering and snapshot", func(t *testing.T) {
+		seed := newOrder()
+		base, err := repository.GetByID(ctx, seed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cat, menuID := uuid.New(), uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_categories(id,restaurant_id,name) VALUES($1,$2,'Category')`, cat, base.RestaurantID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO menu_items(id,restaurant_id,category_id,external_id,name,price) VALUES($1,$2,$3,'partner','Item',100)`, menuID, base.RestaurantID, cat); err != nil {
+			t.Fatal(err)
+		}
+		user := uuid.NewString()
+		stamp := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+		var want []uuid.UUID
+		for i := 1; i <= 5; i++ {
+			id := uuid.MustParse(fmt.Sprintf("00000000-0000-0000-0021-%012d", i))
+			external := id.String()
+			o := &d.Order{ID: id, UserID: user, RestaurantID: base.RestaurantID, ExternalOrderID: &external, Status: d.OrderStatusPending, DeliveryAddress: "Test address", IdempotencyKey: id.String(), CreatedAt: stamp, UpdatedAt: stamp}
+			for j := 2; j >= 1; j-- {
+				o.Items = append(o.Items, d.OrderItem{ID: uuid.MustParse(fmt.Sprintf("00000000-0000-0000-0022-%012d", i*10+j)), OrderID: id, MenuItemID: menuID, ExternalMenuItemID: "partner", Name: fmt.Sprintf("Item %d", i), UnitPrice: 100, Quantity: 1, TotalPrice: 100, CreatedAt: stamp})
+			}
+			for j := 0; j < 2; j++ {
+				o.StatusHistory = append(o.StatusHistory, d.OrderStatusHistory{OrderID: id, Status: d.OrderStatusPending, Source: "kitchen", CreatedAt: stamp})
+			}
+			if _, err := repository.CreateWithIdempotencyKey(ctx, o); err != nil {
+				t.Fatal(err)
+			}
+			want = append([]uuid.UUID{id}, want...)
+		}
+		counted := &countingPool{Pool: pool}
+		reader := repo.NewOrderRepository(counted)
+		full, err := reader.ListByUserIDPaginated(ctx, user, 5, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if counted.reads != 3 {
+			t.Fatalf("page reads=%d", counted.reads)
+		}
+		for i, o := range full {
+			if o.ID != want[i] || len(o.Items) != 2 || len(o.StatusHistory) != 2 {
+				t.Fatalf("wrong details: %+v", o)
+			}
+			if o.Items[0].ID.String() >= o.Items[1].ID.String() || o.StatusHistory[0].ID >= o.StatusHistory[1].ID {
+				t.Fatal("tie ordering unstable")
+			}
+			for _, item := range o.Items {
+				if item.OrderID != o.ID || item.ExternalMenuItemID != "partner" {
+					t.Fatal("items mixed across orders")
+				}
+			}
+			single, err := repository.GetByID(ctx, o.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if single.Items[0].ID != o.Items[0].ID {
+				t.Fatal("single/list item order differs")
+			}
+			history, err := repository.GetStatusHistory(ctx, o.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if history[0].ID != o.StatusHistory[0].ID {
+				t.Fatal("single/list history order differs")
+			}
+		}
+		var combined []uuid.UUID
+		for offset := 0; offset < 5; offset += 2 {
+			counted.reads = 0
+			page, err := reader.ListByUserIDPaginated(ctx, user, 2, offset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if counted.reads != 3 {
+				t.Fatal("query count depends on page size")
+			}
+			for _, o := range page {
+				combined = append(combined, o.ID)
+			}
+		}
+		for i, id := range combined {
+			if id != want[i] {
+				t.Fatal("page overlap or missing order")
+			}
+		}
+		counted.reads = 0
+		restaurant, err := reader.ListByRestaurantID(ctx, base.RestaurantID, 5, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if counted.reads != 3 || len(restaurant) != 5 {
+			t.Fatal("restaurant page not batched")
+		}
+		for i, o := range restaurant {
+			if o.ID != want[i] {
+				t.Fatal("restaurant order unstable")
+			}
+		}
+		counted.reads = 0
+		empty, err := reader.ListByUserIDPaginated(ctx, "missing-user", 10, 0)
+		if err != nil || empty == nil || len(empty) != 0 || counted.reads != 1 {
+			t.Fatal("empty page not handled")
+		}
+		counted.reads = 0
+		counted.beforeSecond = func() {
+			if err := repository.SaveIntegrationResult(ctx, want[0], want[0].String(), d.OrderStatusConfirmed); err != nil {
+				t.Fatal(err)
+			}
+		}
+		snapshot, err := reader.ListByUserIDPaginated(ctx, user, 5, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot[0].Status != d.OrderStatusPending || len(snapshot[0].StatusHistory) != 2 {
+			t.Fatal("page mixes database snapshots")
+		}
+		fresh, err := repository.GetByID(ctx, want[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fresh.Status != d.OrderStatusConfirmed || len(fresh.StatusHistory) != 3 {
+			t.Fatal("concurrent update was not applied")
 		}
 	})
 	t.Run("constraint errors have domain semantics", func(t *testing.T) {
@@ -911,4 +1037,49 @@ func TestPostgresCallbackIdempotency(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Count actual SELECT calls against PostgreSQL, including transactional reads.
+type countingPool struct {
+	coredb.Pool
+	reads        int
+	beforeSecond func()
+}
+
+func (p *countingPool) count() {
+	p.reads++
+	if p.reads == 2 && p.beforeSecond != nil {
+		hook := p.beforeSecond
+		p.beforeSecond = nil
+		hook()
+	}
+}
+func (p *countingPool) Query(ctx context.Context, sql string, args ...any) (coredb.Rows, error) {
+	p.count()
+	return p.Pool.Query(ctx, sql, args...)
+}
+func (p *countingPool) QueryRow(ctx context.Context, sql string, args ...any) coredb.Row {
+	p.count()
+	return p.Pool.QueryRow(ctx, sql, args...)
+}
+func (p *countingPool) Begin(ctx context.Context) (coredb.Tx, error) {
+	tx, err := p.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &countingTx{Tx: tx, parent: p}, nil
+}
+
+type countingTx struct {
+	coredb.Tx
+	parent *countingPool
+}
+
+func (t *countingTx) Query(ctx context.Context, sql string, args ...any) (coredb.Rows, error) {
+	t.parent.count()
+	return t.Tx.Query(ctx, sql, args...)
+}
+func (t *countingTx) QueryRow(ctx context.Context, sql string, args ...any) coredb.Row {
+	t.parent.count()
+	return t.Tx.QueryRow(ctx, sql, args...)
 }

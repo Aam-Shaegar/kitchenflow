@@ -143,7 +143,7 @@ func TestRunPostgres(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		if count != 7 {
+		if count != 8 {
 			t.Fatalf("applied=%d", count)
 		}
 		if err := Run(ctx, pool, "../../../../migrations"); err != nil {

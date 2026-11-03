@@ -688,3 +688,9 @@ SERVER_ADDR and SHUTDOWN_TIMEOUT are the only API HTTP address/shutdown settings
 .env.example now describes native execution on localhost. Copy it to .env and explicitly load it for native runs (`set -a; source .env; set +a`); the binaries do not implicitly read .env. Compose supplies its own container hostnames and paths, using the host credential/key paths for read-only mounts. Do not source native .env values inside containers. Start with an empty database using the local instructions above; startup performs all migrations. After startup, update the demo restaurant URL to localhost as shown, since seed data uses the Compose hostname.
 
 DB_TIMEOUT also caps background connection dial time; a shorter connect_timeout in the PostgreSQL URL is preserved. Docker build context excludes secrets/, environment files and the local issue list; credentials are runtime mounts only.
+
+### Order page reads and ordering
+
+Order pages for customers and restaurants use three SELECTs regardless of page size: headers, all selected order items, and all selected history entries. An empty page uses one SELECT. These reads run in one read-only REPEATABLE READ transaction, so callbacks between the reads cannot mix an old status with newer history. Items and history are attached only to IDs selected for that page; empty detail arrays are returned as [].
+
+Pages sort by created_at DESC, id DESC. Items and history sort by created_at ASC, id ASC, including single-order/history reads. Migration 008 adds indexes for these orders. Offset pagination is deterministic for an unchanged result set; new insertions/deletions between separate page requests may still shift offsets. This is not a cursor or a snapshot shared between HTTP requests.

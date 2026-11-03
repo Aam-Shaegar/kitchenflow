@@ -190,6 +190,7 @@ func (r *PostgresOrderRepository) loadOrderDetailsTx(ctx context.Context, tx cor
 		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at, COALESCE(external_menu_item_id, '')
 		FROM order_items
 		WHERE order_id = $1
+		ORDER BY created_at, id
 	`
 	rows, err := tx.Query(ctx, itemsQuery, order.ID)
 	if err != nil {
@@ -223,7 +224,7 @@ func (r *PostgresOrderRepository) GetStatusHistoryTx(ctx context.Context, tx cor
 		SELECT id, order_id, status, source, event_id, created_at
 		FROM order_status_history
 		WHERE order_id = $1
-		ORDER BY created_at
+		ORDER BY created_at, id
 	`
 	rows, err := tx.Query(ctx, query, orderID)
 	if err != nil {
@@ -242,89 +243,11 @@ func (r *PostgresOrderRepository) GetStatusHistoryTx(ctx context.Context, tx cor
 	return history, rows.Err()
 }
 
-func (r *PostgresOrderRepository) ListByUserIDPaginated(ctx context.Context, userID string, limit, offset int) ([]domain.Order, error) {
-	query := `
-		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
-		FROM orders
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-	rows, err := r.pool.Query(ctx, query, userID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var orders []domain.Order
-	for rows.Next() {
-		var order domain.Order
-		if err := rows.Scan(
-			&order.ID, &order.UserID, &order.RestaurantID, &order.ExternalOrderID,
-			&order.Status, &order.TotalAmount, &order.DeliveryAddress,
-			&order.IdempotencyKey, &order.CreatedAt, &order.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		orders = append(orders, order)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	for i := range orders {
-		loaded, err := r.loadOrderDetails(ctx, &orders[i])
-		if err != nil {
-			return nil, err
-		}
-		orders[i] = *loaded
-	}
-	if orders == nil {
-		orders = []domain.Order{}
-	}
-	return orders, nil
+func (r *PostgresOrderRepository) ListByUserIDPaginated(ctx context.Context, user string, limit, offset int) ([]domain.Order, error) {
+	return r.listPage(ctx, "user_id", user, limit, offset)
 }
-
-func (r *PostgresOrderRepository) ListByRestaurantID(ctx context.Context, restaurantID uuid.UUID, limit, offset int) ([]domain.Order, error) {
-	query := `
-		SELECT id, user_id, restaurant_id, external_order_id, status, total_amount, delivery_address, idempotency_key, created_at, updated_at
-		FROM orders
-		WHERE restaurant_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-	rows, err := r.pool.Query(ctx, query, restaurantID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var orders []domain.Order
-	for rows.Next() {
-		var order domain.Order
-		if err := rows.Scan(
-			&order.ID, &order.UserID, &order.RestaurantID, &order.ExternalOrderID,
-			&order.Status, &order.TotalAmount, &order.DeliveryAddress,
-			&order.IdempotencyKey, &order.CreatedAt, &order.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		orders = append(orders, order)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range orders {
-		loaded, err := r.loadOrderDetails(ctx, &orders[i])
-		if err != nil {
-			return nil, err
-		}
-		orders[i] = *loaded
-	}
-	if orders == nil {
-		orders = []domain.Order{}
-	}
-	return orders, nil
+func (r *PostgresOrderRepository) ListByRestaurantID(ctx context.Context, id uuid.UUID, limit, offset int) ([]domain.Order, error) {
+	return r.listPage(ctx, "restaurant_id", id, limit, offset)
 }
 
 // PrepareIntegrationRetry publishes the correlation ID and pending state before
@@ -500,7 +423,7 @@ func (r *PostgresOrderRepository) GetStatusHistory(ctx context.Context, orderID 
 		SELECT id, order_id, status, source, event_id, created_at
 		FROM order_status_history
 		WHERE order_id = $1
-		ORDER BY created_at
+		ORDER BY created_at, id
 	`
 	rows, err := r.pool.Query(ctx, query, orderID)
 	if err != nil {
@@ -537,6 +460,7 @@ func (r *PostgresOrderRepository) loadOrderDetails(ctx context.Context, order *d
 		SELECT id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at, COALESCE(external_menu_item_id, '')
 		FROM order_items
 		WHERE order_id = $1
+		ORDER BY created_at, id
 	`
 	rows, err := r.pool.Query(ctx, itemsQuery, order.ID)
 	if err != nil {
