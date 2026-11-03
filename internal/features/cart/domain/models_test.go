@@ -1,44 +1,21 @@
 package domain
 
 import (
-	"testing"
-
 	"github.com/google/uuid"
+	"testing"
 )
 
-func mustUUID(s string) uuid.UUID {
-	id, err := uuid.Parse(s)
-	if err != nil {
-		panic(err)
+func TestCartTotalsAndItemLookup(t *testing.T) {
+	id, other := uuid.New(), uuid.New()
+	cart := Cart{Items: []CartItem{{MenuItemID: id, TotalPrice: 109800}, {MenuItemID: other, TotalPrice: 12345}}}
+	if cart.CalculateTotal() != 122145 {
+		t.Fatal("cart total ignores a line")
 	}
-	return id
-}
-
-func TestCartItemTotalPrice(t *testing.T) {
-	item := CartItem{
-		UnitPrice: 10000,
-		Quantity:  2,
+	if cart.FindItemIndex(id) != 0 || cart.FindItemIndex(other) != 1 || cart.FindItemIndex(uuid.New()) != -1 {
+		t.Fatal("item lookup is incorrect")
 	}
-
-	item.TotalPrice = item.UnitPrice * int64(item.Quantity)
-
-	if item.TotalPrice != 20000 {
-		t.Errorf("TotalPrice = %d, want 20000", item.TotalPrice)
-	}
-}
-
-func TestCartSingleRestaurantConflict(t *testing.T) {
-	cart := &Cart{
-		RestaurantID: mustUUID("550e8400-e29b-41d4-a716-446655440000"),
-		Items: []CartItem{
-			{MenuItemID: mustUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1"), Quantity: 1, UnitPrice: 54900, TotalPrice: 54900},
-		},
-	}
-	other := mustUUID("660e8400-e29b-41d4-a716-446655440001")
-	if cart.RestaurantID == other {
-		t.Error("test setup: restaurant IDs must differ")
-	}
-	if len(cart.Items) == 0 {
-		t.Error("cart must be non-empty for conflict check")
+	empty := Cart{}
+	if empty.CalculateTotal() != 0 || empty.FindItemIndex(id) != -1 {
+		t.Fatal("empty cart result incorrect")
 	}
 }

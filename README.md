@@ -432,7 +432,7 @@ psql "$DATABASE_URL" -c "UPDATE restaurants SET integration_base_url='http://loc
 ## Testing
 
 ```bash
-# Unit tests
+# Unit and HTTP tests (PostgreSQL suites require the variable below)
 go test ./...
 
 # E2E against a running stack (needs BASE_URL)
@@ -694,3 +694,16 @@ DB_TIMEOUT also caps background connection dial time; a shorter connect_timeout 
 Order pages for customers and restaurants use three SELECTs regardless of page size: headers, all selected order items, and all selected history entries. An empty page uses one SELECT. These reads run in one read-only REPEATABLE READ transaction, so callbacks between the reads cannot mix an old status with newer history. Items and history are attached only to IDs selected for that page; empty detail arrays are returned as [].
 
 Pages sort by created_at DESC, id DESC. Items and history sort by created_at ASC, id ASC, including single-order/history reads. Migration 008 adds indexes for these orders. Offset pagination is deterministic for an unchanged result set; new insertions/deletions between separate page requests may still shift offsets. This is not a cursor or a snapshot shared between HTTP requests.
+
+### Regression test coverage
+
+Run the complete integration suite explicitly:
+
+```bash
+export KITCHENFLOW_TEST_DATABASE_URL='postgres://postgres:test-password@127.0.0.1:5432/kitchenflow_test?sslmode=disable'
+bash scripts/test-integration.sh
+```
+
+Use a disposable PostgreSQL database. The command refuses to run without the URL, enables race detection and instruments internal packages across test-package boundaries. Tests isolate their data in temporary schemas; the API startup subprocess also applies migrations to the configured database. Ordinary `go test ./...` skips PostgreSQL suites when the variable is absent.
+
+The HTTP workflow test uses real feature services and PostgreSQL repositories behind an HTTP router, with an HTTP restaurant double. It covers scoped credentials, menu/category ownership, cart mutations and prices, idempotent checkout, confirmed cancellation, failed dispatch and retry with unchanged snapshots, HMAC callbacks, history replays, and customer/partner access failures. Dedicated PostgreSQL suites cover concurrent cart/checkout/retry operations, persistence fault injection, migration rollback, timeouts and consistent batched pages. Unit tests exercise dependency failures and guards before writes. Arithmetic-only and duplicate domain tests have been removed; tests now call production behavior. These suites complement process smoke checks; shell E2E hardening remains separate.

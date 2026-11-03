@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	db "github.com/Aam-Shaegar/kitchenflow/internal/core/database"
+	orders "github.com/Aam-Shaegar/kitchenflow/internal/features/orders/domain"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +37,7 @@ func TestConstraintResponses(t *testing.T) {
 		code int
 	}{
 		{db.WriteError(fmt.Errorf("insert: %w", db.ErrUniqueViolation)), 409},
+		{&orders.OrderStatusTransitionError{From: orders.OrderStatusPreparing, To: orders.OrderStatusCancelled}, 409},
 		{db.WriteError(fmt.Errorf("insert: %w", db.ErrViolatesForeignKey)), 404},
 		{db.DeleteError(fmt.Errorf("delete: %w", db.ErrViolatesForeignKey)), 409},
 		{db.WriteError(fmt.Errorf("connection lost: %w", db.ErrUnknown)), 500},
