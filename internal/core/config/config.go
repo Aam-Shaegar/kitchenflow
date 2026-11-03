@@ -2,7 +2,9 @@ package core_config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -42,6 +44,17 @@ func NewConfig() (*Config, error) {
 		shutdownTimeout = parsed
 	}
 
+	_, port, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		return nil, fmt.Errorf("SERVER_ADDR must be host:port")
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return nil, fmt.Errorf("invalid SERVER_ADDR port")
+	}
+	if shutdownTimeout <= 0 {
+		return nil, fmt.Errorf("SHUTDOWN_TIMEOUT must be positive")
+	}
 	return &Config{
 		TimeZone:        zone,
 		DatabaseURL:     databaseURL,

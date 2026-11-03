@@ -5,3 +5,8 @@ logs
 .env
 postgres_data
 bin
+
+# Operator secrets and local-only review notes
+secrets
+.env.*
+docs/ISSUES.md

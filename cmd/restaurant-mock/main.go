@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Aam-Shaegar/kitchenflow/internal/core/callbackauth"
 	request "github.com/Aam-Shaegar/kitchenflow/internal/core/http/request"
 	serverbounds "github.com/Aam-Shaegar/kitchenflow/internal/core/http/server"
 	"github.com/google/uuid"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"slices"
@@ -139,7 +141,7 @@ type MockConfig struct {
 	ProcessingDelays []time.Duration
 }
 
-func configFromEnv() MockConfig {
+func configFromEnv() (MockConfig, error) {
 	mode := strings.ToLower(os.Getenv("MOCK_MODE"))
 	if mode == "" {
 		mode = "auto"
@@ -152,15 +154,25 @@ func configFromEnv() MockConfig {
 			p = strings.TrimSpace(p)
 			if d, err := time.ParseDuration(p); err == nil {
 				parsed = append(parsed, d)
-			} else if n, err := strconv.Atoi(p); err == nil {
+			} else if n, err := strconv.Atoi(p); err == nil && n >= 0 && n <= 86400 {
 				parsed = append(parsed, time.Duration(n)*time.Second)
+			} else {
+				return MockConfig{}, fmt.Errorf("invalid MOCK_DELAYS")
 			}
 		}
 		if len(parsed) > 0 {
 			delays = parsed
 		}
 	}
-	return MockConfig{Mode: mode, ProcessingDelays: delays}
+	if mode != "auto" && mode != "manual" && mode != "rejecting" && mode != "failing" {
+		return MockConfig{}, fmt.Errorf("invalid MOCK_MODE")
+	}
+	for _, delay := range delays {
+		if delay < 0 {
+			return MockConfig{}, fmt.Errorf("negative MOCK_DELAYS")
+		}
+	}
+	return MockConfig{Mode: mode, ProcessingDelays: delays}, nil
 }
 
 func main() {
@@ -174,6 +186,10 @@ func main() {
 		callbackURL = "http://kitchen-api:8080"
 	}
 
+	endpoint, err := url.Parse(callbackURL)
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		log.Fatal("invalid KITCHEN_CALLBACK_URL")
+	}
 	restaurantID := "550e8400-e29b-41d4-a716-446655440000"
 	if envID := os.Getenv("RESTAURANT_ID"); envID != "" {
 		restaurantID = envID
@@ -191,7 +207,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg := configFromEnv()
+	cfg, err := configFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		log.Fatal("invalid PORT")
+	}
 	store := NewMockStore()
 	store.signCallback = signer
 	defer store.Close()

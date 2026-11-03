@@ -9,13 +9,16 @@ import (
 
 type Config struct {
 	URL     string        `envconfig:"DATABASE_URL" required:"true"`
-	Timeout time.Duration `envconfig:"DB_TIMEOUT" required:"true"`
+	Timeout time.Duration `envconfig:"DB_TIMEOUT" default:"10s"`
 }
 
 func NewConfig() (Config, error) {
 	var config Config
 	if err := envconfig.Process("", &config); err != nil {
 		return Config{}, fmt.Errorf("process envconfig: %w", err)
+	}
+	if config.Timeout <= 0 {
+		return Config{}, fmt.Errorf("DB_TIMEOUT must be positive")
 	}
 	return config, nil
 }

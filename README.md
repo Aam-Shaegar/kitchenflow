@@ -329,18 +329,23 @@ arriving only after a failed attempt remain separate reliability work.
 If restaurant integration fails at order creation:
 - Order remains in `integration_failed` status
 - User can see the order and its status
-- No automatic retry in MVP (documented as future improvement)
+- Durable dispatch automatically retries unfinished sends with the original correlation ID
 
 ## Running Locally
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- Go 1.25+ (for local development without Docker)
+- Python 3 (local credential/key issuers)
+- Go 1.25.6+ (for local development without Docker)
 
 ### Using Docker Compose
 
+On the first start, generate local credentials and the demo callback key before starting containers:
+
 ```bash
+export TEST_USER_TOKEN="$(python3 scripts/issue-token.py --subject local-user --role user)"
+python3 scripts/issue-callback-key.py --restaurant 550e8400-e29b-41d4-a716-446655440000 --key-id demo-1
 docker compose up --build
 ```
 
@@ -355,13 +360,13 @@ This starts:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgres://postgres:postgres@postgres:5432/kitchen?sslmode=disable` | PostgreSQL connection string |
+| `DATABASE_URL` | required for native execution | PostgreSQL connection string; Compose supplies its container address |
 | `DB_TIMEOUT` | `10s` | Database operation timeout |
 | `SERVER_ADDR` | `:8080` | HTTP server address |
 | `SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown timeout |
 | `TIME_ZONE` | `UTC` | Application timezone |
-| `LOGGER_FOLDER` | `/app/logs` | Log file directory |
-| `LOGGER_LEVEL` | `INFO` | Log level |
+| `LOGGER_FOLDER` | required for native execution | Log directory; Compose uses `/app/logs` |
+| `LOGGER_LEVEL` | `DEBUG` (Compose: `INFO`) | Log level |
 | `RESTAURANT_ALLOWED_ORIGINS` | empty (dispatch disabled) | Comma-separated trusted restaurant origins, including scheme and port |
 | `RESTAURANT_ALLOWED_PRIVATE_CIDRS` | empty | Explicit private/loopback networks allowed for those origins; Compose demo uses `172.16.0.0/12` |
 | `MIGRATIONS_DIR` | `/app/migrations` | Versioned migrations dir (auto-run) |
@@ -384,15 +389,22 @@ The operator must approve each origin in `RESTAURANT_ALLOWED_ORIGINS`; restauran
 
 ```bash
 # Start PostgreSQL
-docker run -d --name postgres \
+docker run -d --name kitchenflow-local-postgres \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=kitchen \
   -p 5432:5432 \
   postgres:16-alpine
 
-# Run migrations
-psql -h localhost -U postgres -d kitchen -f migrations/001_init.sql
+# Do not apply individual SQL files manually; the API applies and records all migrations.
+
+# Generate local credentials (store the first command's token privately)
+python3 scripts/issue-token.py --subject local-user --role user
+python3 scripts/issue-callback-key.py --restaurant 550e8400-e29b-41d4-a716-446655440000 --key-id demo-1
+export AUTH_CREDENTIALS_FILE=./secrets/kitchenflow-auth.json
+export CALLBACK_KEYS_FILE=./secrets/callback-keys.json
+export CALLBACK_KEY_ID=demo-1
+export MIGRATIONS_DIR=./migrations
 
 # Set environment variables
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/kitchen?sslmode=disable"
@@ -405,7 +417,7 @@ export LOGGER_FOLDER=./logs
 # Run Kitchen API
 go run ./cmd/kitchen-api
 
-# Run Restaurant Mock (separate terminal)
+# Run Restaurant Mock in a separate terminal; export CALLBACK_KEYS_FILE and CALLBACK_KEY_ID there too.
 export PORT=8081
 export KITCHEN_CALLBACK_URL=http://localhost:8080
 go run ./cmd/restaurant-mock
@@ -668,3 +680,11 @@ Both API and restaurant mock enforce header read timeout 5s, total request read 
 Public `GET /api/v1/health/live` returns 200 while the HTTP process can serve requests. `GET /api/v1/health/ready` returns 200 only when the database responds, all migrations required by the deployed files are recorded and runtime tables/versioned columns are queryable. Checks have a 2-second database deadline and return a generic 503 on failure or during shutdown; they do not scan application data or call restaurant services. `/api/v1/health` is a compatibility alias for readiness. Compose uses readiness for its API healthcheck. These checks do not replace full schema validation or restaurant delivery monitoring.
 
 Binding the HTTP port happens synchronously. Startup/listener and shutdown errors propagate through the application; resources are closed before the outer main exits with code 1. Normal signal-driven shutdown exits successfully. No new migration is needed.
+
+### Configuration and database deadlines
+
+SERVER_ADDR and SHUTDOWN_TIMEOUT are the only API HTTP address/shutdown settings; legacy HTTP_SERVER_ADDR/HTTP_SHUTDOWN_TIMEOUT overrides are no longer used. Invalid addresses, nonpositive timeouts, unknown timezones, invalid mock modes and malformed/negative mock delays stop startup. DB_TIMEOUT defaults to 10s and applies to connection establishment/ping, each pool or transaction operation, and result consumption until Rows.Close or QueryRow.Scan. The caller deadline wins when shorter. It is an operation deadline, not an overall transaction deadline; slow migrations may require a larger value. Always close rows. Ping failure closes the newly created pool.
+
+.env.example now describes native execution on localhost. Copy it to .env and explicitly load it for native runs (`set -a; source .env; set +a`); the binaries do not implicitly read .env. Compose supplies its own container hostnames and paths, using the host credential/key paths for read-only mounts. Do not source native .env values inside containers. Start with an empty database using the local instructions above; startup performs all migrations. After startup, update the demo restaurant URL to localhost as shown, since seed data uses the Compose hostname.
+
+DB_TIMEOUT also caps background connection dial time; a shorter connect_timeout in the PostgreSQL URL is preserved. Docker build context excludes secrets/, environment files and the local issue list; credentials are runtime mounts only.

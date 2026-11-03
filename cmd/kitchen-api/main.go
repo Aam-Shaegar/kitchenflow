@@ -59,7 +59,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	cfg := core_config.NewConfigMust()
+	cfg, err := core_config.NewConfig()
+	if err != nil {
+		return err
+	}
+	dbCfg, err := core_pgx_pool.NewConfig()
+	if err != nil {
+		return err
+	}
+	loggerCfg, err := core_logger.NewLoggerConfig()
+	if err != nil {
+		return err
+	}
 	time.Local = cfg.TimeZone
 
 	ctx, cancel := signal.NotifyContext(
@@ -70,7 +81,7 @@ func run() error {
 
 	fmt.Println("Kitchen API starting")
 
-	logger, err := core_logger.NewLogger(core_logger.NewConfigMust())
+	logger, err := core_logger.NewLogger(loggerCfg)
 	if err != nil {
 		return fmt.Errorf("init application logger: %w", err)
 	}
@@ -79,7 +90,7 @@ func run() error {
 	logger.Debug("application time zone", zap.Any("zone", time.Local))
 
 	logger.Debug("initializing postgres connection pool")
-	pool, err := core_pgx_pool.NewConnectionPool(core_pgx_pool.NewConfigMust(), ctx)
+	pool, err := core_pgx_pool.NewConnectionPool(dbCfg, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to init postgres connection pool: %w", err)
 	}
@@ -217,7 +228,7 @@ func run() error {
 
 	logger.Debug("initializing http server")
 	httpServer := core_http_server.NewHTTPServer(
-		core_http_server.NewConfigMust(),
+		core_http_server.Config{Addr: cfg.ServerAddr, ShutdownTimeout: cfg.ShutdownTimeout},
 		logger,
 		core_http_middleware.CORS("*"),
 		core_http_middleware.RequestID(),
