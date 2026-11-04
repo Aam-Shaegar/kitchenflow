@@ -3,8 +3,11 @@ info:
   title: KitchenFlow API
   version: 1.0.0
   description: |
-    Product-ready food delivery backend. Money is in minor units (kopecks, integer).
-    Customer identity is verified using operator-issued Bearer credentials.
+    Kitchen API for the KitchenFlow food delivery backend. Money is in minor units (kopecks, integer).
+    Catalog reads and health checks are public. Cart and order routes require a user credential.
+    Restaurant management and incoming orders require a scoped partner or admin credential.
+    Only admins create restaurants. Callbacks require a restaurant-specific HMAC signature.
+    JSON requests accept a single object without unknown or null fields. The limit is 1 MiB, or 64 KiB for callbacks.
 servers:
   - url: http://localhost:8080
 
@@ -19,33 +22,31 @@ tags:
 paths:
   /api/v1/health:
     get:
-      tags: [Restaurants]
       summary: Readiness check (compatibility alias)
       responses:
-        '503': { description: Database or required schema unavailable }
-        '200':
-          description: Database and required schema are ready
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
+        '200': { $ref: '#/components/responses/Ready' }
+        '503': { $ref: '#/components/responses/NotReady' }
 
   /api/v1/health/live:
     get:
       summary: Process liveness independent of the database
       responses:
-        '200': { description: HTTP process is alive }
+        '200':
+          description: HTTP process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [alive] }
 
   /api/v1/health/ready:
     get:
       summary: Database and schema readiness
       responses:
-        '200': { description: Ready for application requests }
-        '503': { description: Database or schema unavailable, or shutdown in progress }
+        '200': { $ref: '#/components/responses/Ready' }
+        '503': { $ref: '#/components/responses/NotReady' }
 
   /api/v1/restaurants:
     get:
@@ -65,17 +66,20 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Restaurant' }
+                items: { $ref: '#/components/schemas/RestaurantListItem' }
     post:
       security: [{ BearerAuth: [] }]
       tags: [Restaurant Portal]
-      summary: Onboard a restaurant (closed partner API)
+      summary: Onboard a restaurant (admin only)
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateRestaurantRequest' }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '413': { description: 'Request body exceeds the limit' }
         '201':
           description: Created restaurant
           content:
@@ -92,6 +96,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/RestaurantID'
       responses:
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Restaurant
           content:
@@ -110,6 +115,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/UpdateRestaurantRequest' }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
+        '413': { description: 'Request body exceeds the limit' }
         '200':
           description: Updated restaurant
           content:
@@ -128,6 +137,7 @@ paths:
           schema: { type: boolean }
           description: If true, return only available items
       responses:
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Menu grouped by category
           content:
@@ -149,11 +159,16 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [name]
               properties:
                 name: { type: string, minLength: 1, pattern: '\S', maxLength: 120 }
                 position: { type: integer, minimum: 0 }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
+        '413': { description: 'Request body exceeds the limit' }
         '201':
           description: Created category
           content:
@@ -175,6 +190,9 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/CreateMenuItemRequest' }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '413': { description: 'Request body exceeds the limit' }
         '201':
           description: Created item
           content:
@@ -195,6 +213,9 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Restaurant orders
           content:
@@ -210,6 +231,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/MenuItemID'
       responses:
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Menu item
           content:
@@ -228,6 +250,10 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/UpdateMenuItemRequest' }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
+        '413': { description: 'Request body exceeds the limit' }
         '200':
           description: Updated item
           content:
@@ -243,6 +269,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/MenuItemID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -253,6 +282,8 @@ paths:
       tags: [Cart]
       summary: Get current user's cart (single active cart)
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
         '200':
           description: Cart
           content:
@@ -264,6 +295,8 @@ paths:
       tags: [Cart]
       summary: Clear cart
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
         '204': { description: Cleared }
 
   /api/v1/cart/items:
@@ -278,6 +311,10 @@ paths:
             schema:
               $ref: '#/components/schemas/AddCartItemRequest'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '413': { description: 'Request body exceeds the limit' }
+        '404': { description: 'Referenced resource or customer order not found' }
         '201':
           description: Updated cart
           content:
@@ -302,10 +339,14 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [quantity]
               properties:
                 quantity: { type: integer, minimum: 1, maximum: 50 }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '413': { description: 'Request body exceeds the limit' }
         '200':
           description: Updated cart
           content:
@@ -323,6 +364,9 @@ paths:
           required: true
           schema: { type: string, format: uuid }
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '204': { description: Removed }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -343,8 +387,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '413': { description: 'Request body exceeds the limit' }
+        '404': { description: 'Referenced resource or customer order not found' }
         '201':
-          description: Created order
+          description: Saved order, including idempotent replay. Inspect status for restaurant rejection or integration_failed.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
@@ -360,6 +408,8 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
         '200':
           description: List of orders
           content:
@@ -376,6 +426,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OrderID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Order
           content:
@@ -391,6 +444,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OrderID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Current order status
           content:
@@ -411,6 +467,10 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OrderID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
+        '404': { description: 'Referenced resource or customer order not found' }
         '200':
           description: Status history
           content:
@@ -427,6 +487,9 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OrderID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
         '200':
           description: Cancelled order
           content:
@@ -444,6 +507,10 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OrderID'
       responses:
+        '401': { description: 'Missing, invalid or expired credential' }
+        '403': { description: 'Role or restaurant scope does not permit this operation' }
+        '400': { description: 'Invalid request or path parameter' }
+        '404': { description: 'Referenced resource or customer order not found' }
         '200':
           description: Order after retry
           content:
@@ -455,13 +522,13 @@ paths:
   /api/v1/integrations/restaurants/{restaurant_id}/orders/status:
     post:
       tags: [Restaurant Integration]
-      description: HMAC-SHA256 signature required; see README signed restaurant callbacks. Keys are restaurant-scoped, expire, and support overlapping rotation.
+      security: [{ CallbackSignature: [] }]
+      description: HMAC-SHA256 signature required. See the README section on signed restaurant callbacks. Keys are restaurant-scoped, expire, and support overlapping rotation.
       summary: Restaurant callback for order status (idempotent via event_id)
       parameters:
         - $ref: '#/components/parameters/RestaurantID'
         - { name: X-Callback-Key-ID, in: header, required: true, schema: { type: string } }
         - { name: X-Callback-Timestamp, in: header, required: true, schema: { type: string } }
-        - { name: X-Callback-Signature, in: header, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
@@ -469,7 +536,8 @@ paths:
             schema:
               $ref: '#/components/schemas/RestaurantOrderStatusCallback'
       responses:
-        '401': { description: Missing, invalid, expired or wrong-restaurant signature }
+        '400': { description: 'Invalid request or path parameter' }
+        '401': { description: 'Missing, invalid, expired or wrong-restaurant signature' }
         '413': { description: Callback body exceeds 64 KiB }
         '204': { description: Status accepted }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -477,6 +545,10 @@ paths:
 
 components:
   securitySchemes:
+    CallbackSignature:
+      type: apiKey
+      in: header
+      name: X-Callback-Signature
     BearerAuth:
       type: http
       scheme: bearer
@@ -497,15 +569,35 @@ components:
       required: true
       schema: { type: string, format: uuid }
     Limit:
+      description: Invalid or out-of-range values use 20.
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
     Offset:
+      description: Invalid or negative values use zero.
       name: offset
       in: query
       schema: { type: integer, minimum: 0, default: 0 }
 
   responses:
+    Ready:
+      description: Database and required schema are ready
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: ['ready'] }
+    NotReady:
+      description: Database or schema unavailable, or shutdown in progress
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: ['not ready'] }
     NotFound:
       description: Resource not found
       content:
@@ -523,10 +615,21 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
-    Restaurant:
+    RestaurantListItem:
       type: object
       required: [id, name, description, is_open]
       properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        is_open: { type: boolean }
+
+    Restaurant:
+      type: object
+      required: [id, external_id, name, description, is_open, integration_base_url, created_at, updated_at]
+      properties:
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
         id: { type: string, format: uuid }
         external_id: { type: string }
         name: { type: string }
@@ -555,8 +658,11 @@ components:
 
     MenuItem:
       type: object
-      required: [id, category_id, name, description, price, is_available]
+      required: [id, restaurant_id, category_id, external_id, name, description, price, is_available, created_at, updated_at]
       properties:
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        restaurant_id: { type: string, format: uuid }
         id: { type: string, format: uuid }
         category_id: { type: string, format: uuid }
         external_id: { type: string }
@@ -588,11 +694,16 @@ components:
 
     MenuCategory:
       type: object
-      required: [id, name, items]
+      required: [id, restaurant_id, name, position, created_at, updated_at, items]
       properties:
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        position: { type: integer }
+        restaurant_id: { type: string, format: uuid }
         id: { type: string, format: uuid }
         name: { type: string }
         items:
+          nullable: true
           type: array
           items: { $ref: '#/components/schemas/MenuItem' }
 
@@ -607,8 +718,11 @@ components:
 
     CartItem:
       type: object
-      required: [id, menu_item_id, name, unit_price, quantity, total_price]
+      required: [id, cart_id, menu_item_id, name, unit_price, quantity, total_price, created_at, updated_at]
       properties:
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        cart_id: { type: string, format: uuid }
         id: { type: string, format: uuid }
         menu_item_id: { type: string, format: uuid }
         name: { type: string }
@@ -618,17 +732,22 @@ components:
 
     Cart:
       type: object
-      required: [id, restaurant_id, items, total_amount]
+      required: [id, user_id, restaurant_id, items, total_amount, created_at, updated_at]
       properties:
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        user_id: { type: string }
         id: { type: string, format: uuid }
         restaurant_id: { type: string, format: uuid }
         items:
+          nullable: true
           type: array
           items: { $ref: '#/components/schemas/CartItem' }
         total_amount: { type: integer, description: "Minor units (kopecks)" }
 
     AddCartItemRequest:
       type: object
+      additionalProperties: false
       required: [restaurant_id, menu_item_id, quantity]
       properties:
         restaurant_id: { type: string, format: uuid }
@@ -637,9 +756,10 @@ components:
 
     CreateOrderRequest:
       type: object
+      additionalProperties: false
       required: [delivery_address]
       properties:
-        delivery_address: { type: string, minLength: 5, maxLength: 500 }
+        delivery_address: { type: string, minLength: 5, maxLength: 500, description: "The service also limits the address to 500 UTF-8 bytes and requires five bytes after trimming whitespace." }
 
     OrderStatus:
       type: string
@@ -647,8 +767,11 @@ components:
 
     OrderItem:
       type: object
-      required: [menu_item_id, name, unit_price, quantity, total_price]
+      required: [id, order_id, menu_item_id, name, unit_price, quantity, total_price, created_at]
       properties:
+        created_at: { type: string, format: date-time }
+        order_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
         external_menu_item_id: { type: string, description: "Immutable partner product ID; omitted for legacy orders. Retry requires all IDs to be reconciled." }
         menu_item_id: { type: string, format: uuid }
         name: { type: string }
@@ -658,11 +781,14 @@ components:
 
     Order:
       type: object
-      required: [id, restaurant_id, status, total_amount, delivery_address, items, created_at]
+      required: [id, user_id, restaurant_id, status, total_amount, delivery_address, idempotency_key, items, status_history, created_at, updated_at]
       properties:
+        updated_at: { type: string, format: date-time }
+        idempotency_key: { type: string }
+        user_id: { type: string }
         id: { type: string, format: uuid }
         restaurant_id: { type: string, format: uuid }
-        external_order_id: { type: string, nullable: true }
+        external_order_id: { type: string }
         status: { $ref: '#/components/schemas/OrderStatus' }
         total_amount: { type: integer, description: "Minor units (kopecks)" }
         delivery_address: { type: string }
@@ -676,15 +802,18 @@ components:
 
     OrderStatusHistory:
       type: object
-      required: [status, source, created_at]
+      required: [id, order_id, status, source, created_at]
       properties:
+        order_id: { type: string, format: uuid }
+        id: { type: integer, format: int64 }
         status: { $ref: '#/components/schemas/OrderStatus' }
         source: { type: string, enum: [kitchen, restaurant] }
-        event_id: { type: string, nullable: true }
+        event_id: { type: string }
         created_at: { type: string, format: date-time }
 
     RestaurantOrderStatusCallback:
       type: object
+      additionalProperties: false
       required: [external_order_id, status, event_id]
       properties:
         external_order_id: { type: string }

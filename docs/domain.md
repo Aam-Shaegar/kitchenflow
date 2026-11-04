@@ -2,7 +2,7 @@
 
 ## Scope
 
-MVP connects users with restaurants/stores delivering food. Authentication is out of scope.
+MVP connects users with restaurants/stores delivering food. Protected routes use operator-issued bearer credentials. Restaurant callbacks use HMAC signatures.
 
 ## Actors
 
@@ -79,7 +79,7 @@ Allowed forward path:
 
 Cancellation is allowed only from states explicitly permitted by business rules. MVP should allow cancellation from `pending` and `confirmed`; after `preparing` cancellation is rejected.
 
-A status transition is validated in the order service, never in HTTP handlers.
+The order repository checks callback transitions under the order row lock before committing the status and its history.
 
 ## External identity
 
@@ -99,11 +99,11 @@ Restaurant callbacks are also idempotent: repeating the same callback must not m
 
 Order creation and its local records are committed in a database transaction. External restaurant interaction is synchronous for MVP. If external creation fails, the order remains in a non-final integration state and the API returns a stable representation of that state.
 
-Production evolution: transactional outbox + asynchronous delivery/retry worker.
+The checkout transaction also inserts a dispatch job. A background worker leases outstanding jobs and reuses the original order ID when sending again.
 
 Checkout consumes the original cart atomically with order creation, before external dispatch. Failed dispatch is recovered by retrying the immutable order. Integration results and retries never delete a current cart. Legacy orders without a known source cart leave existing cart contents untouched.
 
-Cart item mutations increment a database-owned revision. Checkout carries the revision read with the cart and checks it atomically when consuming the cart; stale revisions abort checkout with 409. Apply migration 006 before starting the updated API.
+Cart item mutations increment a database-owned revision. Checkout carries the revision read with the cart and checks it atomically when consuming the cart; stale revisions abort checkout with 409. Startup applies pending migrations automatically.
 
 Cancellation requires a restaurant acknowledgement with the original external ID and cancelled status, or a cancellation callback. Restaurant refusal returns 409; unconfirmed outcomes return 503 and can be retried idempotently. The partner arbitrates cancellation versus preparation atomically.
 

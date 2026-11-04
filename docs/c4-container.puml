@@ -3,8 +3,8 @@
 LAYOUT_WITH_LEGEND()
 
 Person(user, "User", "Browses restaurants and creates food orders")
+System_Ext(web, "API client", "External HTTP client")
 System_Boundary(kitchen, "KitchenFlow") {
-  Container(web, "Web Client", "Browser", "Calls Kitchen API")
   Container(api, "Kitchen API", "Go", "REST API, business logic and orchestration")
   ContainerDb(db, "PostgreSQL", "PostgreSQL", "Restaurants, menus, carts and orders")
 }

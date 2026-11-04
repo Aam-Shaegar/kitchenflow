@@ -1,8 +1,9 @@
 @startuml
-|Restaurant|
+|Admin|
 start
 :Onboard via POST /restaurants;
-:Manage menu (categories/items CRUD);
+|Restaurant|
+:Manage menu (create categories, create/update/delete items);
 :Set availability (item is_available, restaurant is_open);
 :Receive order from Kitchen API\nPOST /api/v1/restaurant/orders;
 :Validate order data;
@@ -13,7 +14,7 @@ else (no)
   :Return 201 cancelled + callback cancelled;
 endif
 
-:Kitchen validates transition;\ninvalid => 409, duplicate event_id => 204 idempotent;
+:Kitchen validates transition;\ninvalid => 409, matching replay => 204;
 :Monitor incoming orders\nGET /restaurants/{id}/orders;
 stop
 @enduml

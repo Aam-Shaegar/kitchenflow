@@ -38,7 +38,7 @@ entity carts {
   --
   * user_id : text <<UQ>>
   * restaurant_id : uuid <<FK>>
-  note: "single active cart per user"
+  * revision : bigint
 }
 
 entity cart_items {
@@ -73,11 +73,21 @@ entity order_items {
   * id : uuid <<PK>>
   --
   * order_id : uuid <<FK>>
+  external_menu_item_id : text <<snapshot>>
   * menu_item_id : uuid <<FK>>
   * name : text <<snapshot>>
   * unit_price : bigint <<snapshot, kopecks>>
   * quantity : int
   * total_price : bigint <<kopecks>>
+}
+
+entity order_dispatch {
+  * order_id : uuid <<PK,FK>>
+  base_url : text
+  available_at : timestamptz
+  lease_token : uuid
+  lease_until : timestamptz
+  attempts : integer
 }
 
 entity order_status_history {
@@ -86,7 +96,7 @@ entity order_status_history {
   * order_id : uuid <<FK>>
   * status : order_status
   * source : text
-  * event_id : text
+  event_id : text
   * created_at : timestamptz
   --
   <<UQ>> (event_id) where event_id is not null
@@ -94,7 +104,7 @@ entity order_status_history {
 
 entity schema_migrations {
   * filename : text <<PK>>
-  created_at : timestamptz
+  applied_at : timestamptz
 }
 
 restaurants ||--o{ menu_categories
@@ -106,5 +116,6 @@ menu_items ||--o{ cart_items
 restaurants ||--o{ orders
 orders ||--o{ order_items
 menu_items ||--o{ order_items
+orders ||--o| order_dispatch
 orders ||--o{ order_status_history
 @enduml

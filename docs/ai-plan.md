@@ -1,4 +1,6 @@
-# AI Agent Implementation Plan
+# Historical MVP implementation plan
+
+This planning document records the original design goals. For current dependencies and runtime behavior see [the architecture notes](ARCHITECTURE.md).
 
 You are implementing the KitchenFlow food delivery MVP in Go.
 

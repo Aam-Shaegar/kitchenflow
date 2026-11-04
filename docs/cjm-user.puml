@@ -15,7 +15,7 @@ if (Restaurant open?) then (yes)
     :Enter delivery address (5..500 chars);
     :Create order with Idempotency-Key;
     if (Restaurant integration succeeds?) then (yes)
-      :See order pending;
+      :Read current order status;
       :Track confirmed → preparing → ready → delivering → delivered;
       if (Need to cancel?) then (yes)
         if (pending/confirmed?) then (yes)
