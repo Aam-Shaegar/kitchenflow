@@ -24,7 +24,7 @@ func Run(ctx context.Context, pool db.Pool, dir string) error {
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
-	var files []migration
+	files := make([]migration, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue

@@ -18,7 +18,7 @@ import (
 func TestAuthIdentityAndRestaurantIsolation(t *testing.T) {
 	own, other := uuid.New(), uuid.New()
 	tokens := map[string]string{"user": strings.Repeat("u", 43), "partner": strings.Repeat("p", 43), "admin": strings.Repeat("a", 43), "expired": strings.Repeat("e", 43)}
-	var entries []credential
+	entries := make([]credential, 0, len(tokens))
 	for role, token := range tokens {
 		hash := sha256.Sum256([]byte(token))
 		expires := time.Now().Add(time.Hour)

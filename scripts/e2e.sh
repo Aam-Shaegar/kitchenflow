@@ -13,7 +13,7 @@ trap 'exit 143' TERM
 
 go build -o "$run/api" ./cmd/kitchen-api
 go build -o "$run/mock" ./cmd/restaurant-mock
-db=$(docker run -d --rm -p 127.0.0.1::5432 -e POSTGRES_PASSWORD=e2e -e POSTGRES_DB=kitchenflow_e2e postgres:16-alpine)
+db=$(docker run -d --rm -p 127.0.0.1::5432 -e POSTGRES_PASSWORD=e2e -e POSTGRES_DB=kitchenflow_e2e postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea)
 for ((i=0; i<60; i++)); do
   if docker exec "$db" pg_isready -h 127.0.0.1 -U postgres -d kitchenflow_e2e >/dev/null; then break; fi
   sleep 1

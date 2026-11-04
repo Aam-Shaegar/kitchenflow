@@ -99,7 +99,7 @@ func TestManualStatusCodes(t *testing.T) {
 	store := NewMockStore()
 	defer store.Close()
 	store.CreateOrGet(CreateOrderRequest{ExternalOrderID: "order"}, "confirmed", true)
-	handler := handleOrderByID(store, "http://127.0.0.1:1", "restaurant", MockConfig{Mode: "manual"})
+	handler := handleOrderByID(store, "http://127.0.0.1:1", "restaurant")
 	for _, tc := range []struct {
 		id, status string
 		code       int

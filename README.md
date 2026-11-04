@@ -431,6 +431,8 @@ psql "$DATABASE_URL" -c "UPDATE restaurants SET integration_base_url='http://loc
 
 ## Testing
 
+GitHub Actions builds the project, runs vet and golangci-lint, tests with PostgreSQL and the race detector, and runs the process E2E on pushes and pull requests. The Go version comes from `go.mod`.
+
 ```bash
 # Unit and HTTP tests (PostgreSQL suites require the variable below)
 go test ./...
@@ -467,8 +469,8 @@ They cover callback replays after later transitions, concurrent duplicates and e
 ## Static Analysis
 
 ```bash
-# Run linter
-golangci-lint run
+# Run the same linter as CI (install golangci-lint v2.7.2)
+make lint
 
 # Run go vet
 go vet ./...

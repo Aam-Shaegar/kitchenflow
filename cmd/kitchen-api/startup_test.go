@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -41,7 +42,7 @@ func TestStartupExitCode(t *testing.T) {
 	}
 	auth := write("auth.json", []map[string]any{{"subject": "test", "role": "user", "token_sha256": hex.EncodeToString(hash[:]), "expires_at": expires}})
 	keys := write("keys.json", []map[string]any{{"key_id": "test", "restaurant_id": "550e8400-e29b-41d4-a716-446655440000", "secret_base64": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))), "expires_at": expires}})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +60,8 @@ func TestStartupExitCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("startup failure returned successful exit")
 	}
-	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 1 || !strings.Contains(string(output), "HTTP server: listen HTTP:") {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(string(output), "HTTP server: listen HTTP:") {
 		t.Fatalf("unexpected exit: %v output %s", err, output)
 	}
 }

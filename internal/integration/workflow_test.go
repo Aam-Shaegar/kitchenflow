@@ -93,8 +93,9 @@ func TestAuthenticatedHTTPWorkflowPostgres(t *testing.T) {
 		return path
 	}
 	tokens := map[string]string{}
-	var credentials []map[string]any
-	for _, role := range []string{"alice", "bob", "partner", "admin"} {
+	roles := []string{"alice", "bob", "partner", "admin"}
+	credentials := make([]map[string]any, 0, len(roles))
+	for _, role := range roles {
 		token := uuid.NewString() + uuid.NewString()
 		tokens[role] = token
 		hash := sha256.Sum256([]byte(token))

@@ -32,7 +32,7 @@ func TestServerBodyAndHeaderLimits(t *testing.T) {
 		if unknown {
 			reader = io.NopCloser(strings.NewReader(body))
 		}
-		req, _ := http.NewRequest("POST", server.URL, reader)
+		req, _ := http.NewRequestWithContext(t.Context(), "POST", server.URL, reader)
 		resp, err := server.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -42,7 +42,7 @@ func TestServerBodyAndHeaderLimits(t *testing.T) {
 			t.Fatalf("chunked=%t status=%d", unknown, resp.StatusCode)
 		}
 	}
-	req, _ := http.NewRequest("GET", server.URL, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), "GET", server.URL, nil)
 	req.Header.Set("X-Large", strings.Repeat("x", 70*1024))
 	resp, err := server.Client().Do(req)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestServerBodyAndHeaderLimits(t *testing.T) {
 	if server.Config.ReadTimeout <= 0 || server.Config.WriteTimeout <= 0 || server.Config.IdleTimeout <= 0 {
 		t.Fatal("missing server timeouts")
 	}
-	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", server.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

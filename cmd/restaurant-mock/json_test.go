@@ -26,7 +26,7 @@ func TestMalformedBodiesNeverChangeMockState(t *testing.T) {
 			body = `{"status":"preparing"} {}`
 		}
 		w := httptest.NewRecorder()
-		handleOrderByID(store, "", "", MockConfig{})(w, httptest.NewRequest("POST", "/api/v1/restaurant/orders/"+endpoint, strings.NewReader(body)))
+		handleOrderByID(store, "", "")(w, httptest.NewRequest("POST", "/api/v1/restaurant/orders/"+endpoint, strings.NewReader(body)))
 		if w.Code != 400 {
 			t.Fatal(w.Code)
 		}

@@ -190,7 +190,7 @@ func (c *HTTPClient) post(ctx context.Context, baseURL, path string, req any) (*
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusConflict {
 		return nil, coreerrors.ErrConflict
 	}

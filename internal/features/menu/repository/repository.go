@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"github.com/google/uuid"
 	"github.com/Aam-Shaegar/kitchenflow/internal/features/menu/domain"
+	"github.com/google/uuid"
 )
 
 type MenuRepository interface {

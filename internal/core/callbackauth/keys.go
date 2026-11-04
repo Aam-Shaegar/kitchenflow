@@ -33,7 +33,7 @@ func Load(path string) (*Keys, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open callback keys: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var entries []key
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
@@ -64,7 +64,7 @@ func Load(path string) (*Keys, error) {
 func signature(secret []byte, timestamp, method, path string, body []byte) string {
 	digest := sha256.Sum256(body)
 	mac := hmac.New(sha256.New, secret)
-	fmt.Fprintf(mac, "v1\n%s\n%s\n%s\n%s", timestamp, method, path, hex.EncodeToString(digest[:]))
+	_, _ = fmt.Fprintf(mac, "v1\n%s\n%s\n%s\n%s", timestamp, method, path, hex.EncodeToString(digest[:]))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 func (k *Keys) Signer(id string, restaurant uuid.UUID) (func(*http.Request, []byte) error, error) {

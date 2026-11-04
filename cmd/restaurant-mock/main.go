@@ -221,7 +221,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/restaurant/orders", handleOrders(store, callbackURL, restaurantID, cfg))
-	mux.HandleFunc("/api/v1/restaurant/orders/", handleOrderByID(store, callbackURL, restaurantID, cfg))
+	mux.HandleFunc("/api/v1/restaurant/orders/", handleOrderByID(store, callbackURL, restaurantID))
 	mux.HandleFunc("/api/v1/restaurant/menu", handleMenu)
 	mux.HandleFunc("/health", handleHealth)
 
@@ -274,7 +274,7 @@ func handleOrders(store *MockStore, callbackURL, restaurantID string, cfg MockCo
 	}
 }
 
-func handleOrderByID(store *MockStore, callbackURL, restaurantID string, cfg MockConfig) http.HandlerFunc {
+func handleOrderByID(store *MockStore, callbackURL, restaurantID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// The same prefix serves both the order card and the manual status trigger.
 		if r.URL.Path == "/api/v1/restaurant/orders/cancel" {
@@ -406,7 +406,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleCancel(store *MockStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -417,18 +417,18 @@ func handleCancel(store *MockStore) http.HandlerFunc {
 			return
 		}
 		if req.ExternalOrderID == "" {
-			http.Error(w, "invalid request", 400)
+			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		o, ok := store.orders[req.ExternalOrderID]
 		if !ok {
-			http.Error(w, "not found", 404)
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		if o.Status != "cancelled" && !ordersdomain.CanTransition(ordersdomain.OrderStatus(o.Status), ordersdomain.OrderStatusCancelled) {
-			http.Error(w, "already cooking", 409)
+			http.Error(w, "already cooking", http.StatusConflict)
 			return
 		}
 		o.Status = "cancelled"

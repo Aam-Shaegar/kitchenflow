@@ -38,7 +38,7 @@ func LoadAuth(path string) (*Auth, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open auth credentials: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var entries []credential
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()

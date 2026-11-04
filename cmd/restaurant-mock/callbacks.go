@@ -124,7 +124,7 @@ func (s *MockStore) deliverCallbacks() {
 				resp, err = client.Do(req)
 				if err == nil {
 					_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 						break
 					}

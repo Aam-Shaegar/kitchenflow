@@ -40,11 +40,10 @@ func (h *HTTPServer) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	listener, err := net.Listen("tcp", h.config.Addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", h.config.Addr)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
 	}
-	defer listener.Close()
 	ch := make(chan error, 1)
 	go func() {
 		defer close(ch)
