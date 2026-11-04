@@ -435,8 +435,9 @@ psql "$DATABASE_URL" -c "UPDATE restaurants SET integration_base_url='http://loc
 # Unit and HTTP tests (PostgreSQL suites require the variable below)
 go test ./...
 
-# E2E against a running stack (needs BASE_URL)
-BASE_URL=http://localhost:8080 bash scripts/e2e.sh
+# Isolated process E2E (requires Go, Python 3 and a running Docker daemon).
+# Builds both services, creates temporary credentials and starts disposable PostgreSQL.
+bash scripts/e2e.sh
 
 # Manual demo (prices in kopecks: 54900 = 549.00 ₽)
 RID=550e8400-e29b-41d4-a716-446655440000
@@ -653,7 +654,7 @@ Each command prints a new random token once. Keep it private and send `Authoriza
 
 This is an operator-issued personal/API credential model, without public signup or password login. Subject is the stable customer identity; X-User-ID is ignored. User tokens can access only their own cart/orders. Partner tokens manage only explicitly listed restaurant UUIDs, including ownership lookup for menu-item mutation and incoming orders. Only admins create restaurants; admins cannot impersonate customer accounts. Catalog GETs and health remain public. Callbacks require the dedicated HMAC keys described below.
 
-Missing/invalid/expired tokens return 401; authenticated but disallowed roles or restaurants return 403. Rotate by issuing a replacement and removing the old hash; restart API instances to load revocations. Tokens default to 30 days (configurable up to 365). Protect the registry from untrusted writes. For E2E, set TEST_USER_TOKEN to a user credential.
+Missing/invalid/expired tokens return 401; authenticated but disallowed roles or restaurants return 403. Rotate by issuing a replacement and removing the old hash; restart API instances to load revocations. Tokens default to 30 days (configurable up to 365). Protect the registry from untrusted writes. The E2E runner issues its own temporary credentials.
 
 ### Signed restaurant callbacks
 
@@ -706,4 +707,4 @@ bash scripts/test-integration.sh
 
 Use a disposable PostgreSQL database. The command refuses to run without the URL, enables race detection and instruments internal packages across test-package boundaries. Tests isolate their data in temporary schemas; the API startup subprocess also applies migrations to the configured database. Ordinary `go test ./...` skips PostgreSQL suites when the variable is absent.
 
-The HTTP workflow test uses real feature services and PostgreSQL repositories behind an HTTP router, with an HTTP restaurant double. It covers scoped credentials, menu/category ownership, cart mutations and prices, idempotent checkout, confirmed cancellation, failed dispatch and retry with unchanged snapshots, HMAC callbacks, history replays, and customer/partner access failures. Dedicated PostgreSQL suites cover concurrent cart/checkout/retry operations, persistence fault injection, migration rollback, timeouts and consistent batched pages. Unit tests exercise dependency failures and guards before writes. Arithmetic-only and duplicate domain tests have been removed; tests now call production behavior. These suites complement process smoke checks; shell E2E hardening remains separate.
+The HTTP workflow test uses real feature services and PostgreSQL repositories behind an HTTP router, with an HTTP restaurant double. It covers scoped credentials, menu/category ownership, cart mutations and prices, idempotent checkout, confirmed cancellation, failed dispatch and retry with unchanged snapshots, HMAC callbacks, history replays, and customer/partner access failures. Dedicated PostgreSQL suites cover concurrent cart/checkout/retry operations, persistence fault injection, migration rollback, timeouts and consistent batched pages. Unit tests exercise dependency failures and guards before writes. Arithmetic-only and duplicate domain tests have been removed; tests now call production behavior. The process E2E also verifies delivered history from signed mock callbacks, restaurant rejection, recovery through retry, and customer cancellation against both services.
