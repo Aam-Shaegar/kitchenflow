@@ -3,7 +3,6 @@ package core_database
 import (
 	"context"
 	"errors"
-	"time"
 )
 
 type Pool interface {
@@ -11,7 +10,6 @@ type Pool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) Row
 	Exec(ctx context.Context, sql string, arguments ...any) (CommandTag, error)
 	Close()
-	OpTimeout() time.Duration
 	Begin(ctx context.Context) (Tx, error)
 }
 

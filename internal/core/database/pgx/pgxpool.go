@@ -44,10 +44,6 @@ func NewConnectionPool(config Config, ctx context.Context) (*PgxConnectionPool, 
 	}, nil
 }
 
-func (p *PgxConnectionPool) OpTimeout() time.Duration {
-	return p.opTimeout
-}
-
 func (p *PgxConnectionPool) Query(ctx context.Context, sql string, args ...any) (core_database.Rows, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.opTimeout)
 	rows, err := p.Pool.Query(ctx, sql, args...)

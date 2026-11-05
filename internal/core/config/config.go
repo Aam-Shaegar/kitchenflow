@@ -10,7 +10,6 @@ import (
 
 type Config struct {
 	TimeZone        *time.Location
-	DatabaseURL     string
 	ServerAddr      string
 	ShutdownTimeout time.Duration
 }
@@ -57,16 +56,7 @@ func NewConfig() (*Config, error) {
 	}
 	return &Config{
 		TimeZone:        zone,
-		DatabaseURL:     databaseURL,
 		ServerAddr:      serverAddr,
 		ShutdownTimeout: shutdownTimeout,
 	}, nil
-}
-
-func NewConfigMust() *Config {
-	config, err := NewConfig()
-	if err != nil {
-		panic(fmt.Errorf("get core config: %w", err))
-	}
-	return config
 }

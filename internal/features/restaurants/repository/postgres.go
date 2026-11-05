@@ -27,14 +27,6 @@ func (r *PostgresRestaurantRepository) GetByID(ctx context.Context, id uuid.UUID
 	return r.scanRestaurant(row)
 }
 
-func (r *PostgresRestaurantRepository) List(ctx context.Context) ([]domain.RestaurantListItem, error) {
-	return r.ListOpen(ctx, false)
-}
-
-func (r *PostgresRestaurantRepository) ListOpen(ctx context.Context, onlyOpen bool) ([]domain.RestaurantListItem, error) {
-	return r.ListPaginated(ctx, onlyOpen, 100, 0)
-}
-
 func (r *PostgresRestaurantRepository) ListPaginated(ctx context.Context, onlyOpen bool, limit, offset int) ([]domain.RestaurantListItem, error) {
 	query := `
 		SELECT id, name, description, is_open

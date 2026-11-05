@@ -184,14 +184,6 @@ func (r *PostgresMenuRepository) CreateCategory(ctx context.Context, cat *domain
 	return core_database.WriteError(err)
 }
 
-func (r *PostgresMenuRepository) UpdateCategory(ctx context.Context, cat *domain.MenuCategory) error {
-	query := `
-		UPDATE menu_categories SET name = $2, position = $3, updated_at = $4 WHERE id = $1
-	`
-	_, err := r.pool.Exec(ctx, query, cat.ID, cat.Name, cat.Position, cat.UpdatedAt)
-	return core_database.WriteError(err)
-}
-
 func (r *PostgresMenuRepository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM menu_categories WHERE id = $1`
 	_, err := r.pool.Exec(ctx, query, id)

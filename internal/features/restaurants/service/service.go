@@ -32,10 +32,6 @@ func (s *RestaurantService) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 }
 
 func (s *RestaurantService) GetByIDForOrder(ctx context.Context, id uuid.UUID) (*domain.RestaurantInfo, error) {
-	return s.GetInfoByID(ctx, id)
-}
-
-func (s *RestaurantService) GetInfoByID(ctx context.Context, id uuid.UUID) (*domain.RestaurantInfo, error) {
 	rest, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -51,21 +47,6 @@ func (s *RestaurantService) GetInfoByID(ctx context.Context, id uuid.UUID) (*dom
 		Description:        rest.Description,
 		IsOpen:             rest.IsOpen,
 	}, nil
-}
-
-func (s *RestaurantService) List(ctx context.Context) ([]domain.RestaurantListItem, error) {
-	items, err := s.repo.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if items == nil {
-		return []domain.RestaurantListItem{}, nil
-	}
-	return items, nil
-}
-
-func (s *RestaurantService) ListFiltered(ctx context.Context, onlyOpen bool) ([]domain.RestaurantListItem, error) {
-	return s.ListFilteredPaginated(ctx, onlyOpen, 100, 0)
 }
 
 func (s *RestaurantService) ListFilteredPaginated(ctx context.Context, onlyOpen bool, limit, offset int) ([]domain.RestaurantListItem, error) {
@@ -90,7 +71,6 @@ type CreateRestaurantInput struct {
 	Description        string
 	ExternalID         string
 	IntegrationBaseURL string
-	IsOpen             bool
 }
 
 func (s *RestaurantService) Create(ctx context.Context, in CreateRestaurantInput) (*domain.Restaurant, error) {

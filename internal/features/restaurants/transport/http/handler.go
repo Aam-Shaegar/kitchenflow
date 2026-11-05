@@ -1,6 +1,7 @@
 package handler
 
 import (
+	coreerrors "github.com/Aam-Shaegar/kitchenflow/internal/core/errors"
 	"net/http"
 	"strconv"
 
@@ -67,12 +68,12 @@ func (h *RestaurantHandler) CreateRestaurant(w http.ResponseWriter, r *http.Requ
 	handler := core_http_response.NewHTTPResponseHandler(log, w)
 
 	var req CreateRestaurantRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := core_http_request.DecodeObject(r, &req); err != nil {
 		handler.ErrorResponse(err, "invalid request")
 		return
 	}
 	if req.Name == "" {
-		handler.ErrorResponse(errInvalid(), "invalid request")
+		handler.ErrorResponse(coreerrors.ErrInvalidArgument, "invalid request")
 		return
 	}
 
@@ -107,7 +108,7 @@ func (h *RestaurantHandler) UpdateRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req UpdateRestaurantRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := core_http_request.DecodeObject(r, &req); err != nil {
 		handler.ErrorResponse(err, "invalid request")
 		return
 	}
